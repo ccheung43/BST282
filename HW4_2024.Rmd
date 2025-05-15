@@ -1,0 +1,619 @@
+---
+title: "HW4_2024"
+output: html_document
+date: "2024-03-17"
+---
+
+### Environment Setup
+
+Before you start your HW4, please follow the instructions in: `/shared/courseSharedFolders/133853/HW4/hw4_setup.sh`
+
+```{r}
+library(tidyverse)
+library(ggplot2)
+```
+
+### Assignment
+
+Aside from embedding screenshots, all code blocks in this file are set with `eval=FALSE`. This file is only meant to be a pasted collection of code you have already run. To run your code, submit it in a separate file as a job on HPC.
+
+*Throughout this HW, all the coordinates are given in **hg38** version of the human genome assembly.*
+
+*For extra credit questions, the total score cannot exceed 100%*
+
+### Part I. Chromatin Modification
+
+DNA methylation patterns are altered in many diseases, including cancer, which makes this epigenetic mark an attractive target for various studies. Genome-wide detection of 5mC by bisulfite sequencing is regarded as the current gold standard for DNA methylation detection. In the HW3, we have performed the gene regulation analysis on prostate cancer using transcription factor ChIP-seq data. To better understand the effect of methylation on gene expression, we can utilize BS-seq to detect the DNA methylation positions in the genome.
+
+#### Part I.1
+
+Reduced-representation bisulfite sequencing (RRBS-Seq) is a technique that uses one or multiple restriction enzymes on the genomic DNA to produce sequence-specific fragmentation. The fragmented genomic DNA is then treated with bisulfite and sequenced. RRBS-Seq is particularly effective on the sites with high methylation, such as in promoters and repeat regions.
+
+Given a subsampled RRBS-seq file in a prostate cancer cell line (LNCaP), perform the reads mapping with bismarker. (<https://github.com/FelixKrueger/Bismark/tree/master/Docs>)
+
+</br>
+
+**Problem 1**
+
+Bismarker has been uploaded and 'installed' for you in the `/shared/courseSharedFolders/133853/HW4/setup` folder. (source: `wget https://github.com/FelixKrueger/Bismark/archive/0.23.0.zip`)
+
+**Using Bismark, your task is to prepare a reference genome for subsequent RRBS-Seq data analysis.**
+
+```{bash eval=FALSE}
+
+bismark_path="/shared/courseSharedFolders/133853/HW4/setup/Bismark-0.23.0"
+genome_path="/shared/home/cac8967/HW4/Bismark"
+
+$bismark_path/bismark_genome_preparation --verbose --bowtie2 $genome_path
+```
+
+**One of the main jobs of Bismark genome preparation is to conduct the C-T or G-A conversion. Why are we doing this?**
+
+```         
+Bismark genome preparation is used to conduct the C-t or G-A conversion to account for DNA methylation in our bisulfate sequencing. In this sequencing method DNA is treated with sodium bisulfite, which converts unmethylated cytosines (C) to uracils (U) (later changed to thymine/T) while leaving methylated cytosines  (5mC) unchanged. Similarly, there are also G-A conversions happening, although not as extensively. Bismark performs these conversions prior to mapping in order to mask the methylated nucleotides so that they can be mapped without distinguishing their methylation status, thus enabling comparison between methylated and unmethylated cytosines.
+```
+
+</br>
+
+**Problem 2**
+
+Now that we prepared the genome for the question, follow the Bismark docs (<https://rawgit.com/FelixKrueger/Bismark/master/Docs/Bismark_User_Guide.html>) to run the main bismark functions, then deduplicate and extract the methylations. We already did (I) for you (`bismark_genome_preparation`), so you can start with (II).
+
+**Hint 1:** Note that the latest version is written in perl language, so you will execute the program by using perl /absolute/path/to/the/bismark-\*/file. So, for instance, if you wanted to run bismark, you would enter the command perl <modify relative path as needed>/bismark \<add argument(s)\>. Overall, we want you to run (II)-(V).
+
+**Hint 2:** The genome is in `/shared/courseSharedFolders/133853/HW4/setup/hg38`. The subsampled RRBS-seq file is in `/shared/courseSharedFolders/133853/HW4/data/bs_subreads.fastq`.
+
+**What do you see after performing `perl bismark2report`? How many reads are unaligned and how many CpGs, CHGs, and CHHs are methylated?**
+
+```{bash eval=FALSE}
+set_dir="/shared/home/cac8967/HW4"
+bismark_path="/shared/courseSharedFolders/133853/HW4/setup/Bismark-0.23.0"
+genome_path="/shared/courseSharedFolders/133853/HW4/setup/hg38"
+rrbs_path="/shared/home/cac8967/HW4/bs_subreads.fastq"
+output_path="/shared/home/cac8967/HW4/Bismark"
+
+# II. Alignment
+cd $set_dir
+perl $bismark_path/bismark $genome_path $rrbs_path --output_dir $output_path/Alignment
+
+# III. Deduplication 
+perl $bismark_path/deduplicate_bismark $output_path/Alignment/bs_subreads_bismark_bt2.bam --output_dir $output_path/Deduplication
+
+# IV. Methylation Extraction
+perl $bismark_path/bismark_methylation_extractor --gzip --bedGraph $output_path/Alignment/bs_subreads_bismark_bt2.bam -o $output_path/MExtraction
+
+# V. Summary Report
+perl $bismark_path/bismark2report --alignment_report $output_path/Alignment/bs_subreads_bismark_bt2_SE_report.txt --dedup_report $output_path/Deduplication/bs_subreads_bismark_bt2.deduplication_report.txt --splitting_report $output_path/MExtraction/bs_subreads_bismark_bt2_splitting_report.txt --mbias_report $output_path/MExtraction/bs_subreads_bismark_bt2.M-bias.txt -o $output_path/report.html
+
+```
+
+```         
+In this problem, we ran alignment, deduplication, and then methylation extraction to get our summary report. However, since we are doing RRBS-Seq data analysis, it is not recommended to perform deduplication on this RRBS data, as stated in the bismark documentaion. The output report showed that 99.9% of alighments were unique, showing that the data for the most part did not have duplicated alighments. After performing perl bismark2report, an html file was produced containing the report information. Based on this report, 4176 of 10000 reads (41.76%) are unaligned. 1369 CpGs, 21 CHGs, and 103 CHHs are methylated. 
+```
+
+```{r,echo=FALSE}
+knitr::include_graphics("q12a.png")
+knitr::include_graphics("q12b.png")
+knitr::include_graphics("q12c.png")
+knitr::include_graphics("q12d.png")
+knitr::include_graphics("q12f.png")
+knitr::include_graphics("q12e.png")
+```
+
+</br>
+
+#### Part I.2
+
+Methylation in cytosine at promoter regions normally suppresses the gene expression, while H3K4me3 and H3K27ac histone modifications at promoter regions imply higher gene expression.
+
+All files are located at `/shared/courseSharedFolders/133853/HW4/data`.
+
+1.  `Methylation.bed`: We have processed RRBS-seq data on the prostate cancer cell line dataset (<https://www.encodeproject.org/experiments/ENCSR859PDD/>) and report the high methylation signal sites.
+
+2.  `ProstateCancer_H3K4me3_peaks.bed`: The H3K4me3 peaks file of prostate cancer.
+
+3.  `ProstateCancer_H3K27ac_peaks.bed`: The H3K27ac peaks file of prostate cancer.
+
+4.  `Expr_loc.txt`: This file contains background information. The first three columns are chromosome coordinates, the fourth column is the gene expression score of a prostate cancer tissue, and the rest of the columns are the gene symbols.
+
+</br>
+
+**Problem 3**
+
+**Find the intersection of loops and histone modification signal intervals. Draw a violin plot to illustrate the expression level of genes with methylation, H3K4me3, and H3K27ac in their promoter regions, compared to the background expression levels.**
+
+**Hint 1:** The methylation group might have a lower signal-noise ratio. Please drop the genes with very low expression (\< 0.0001) and use the log scale for better visualization in violin plots.
+
+```{bash eval=FALSE}
+methylation_path="/shared/courseSharedFolders/133853/HW4/data/Methylation.bed"
+H3K4me3_path="/shared/courseSharedFolders/133853/HW4/data/ProstateCancer_H3K4me3_peaks.bed"
+H3K27ac_path="/shared/courseSharedFolders/133853/HW4/data/ProstateCancer_H3K27ac_peaks.bed"
+expr_path="/shared/courseSharedFolders/133853/HW4/data/Expr_loc.txt"
+output_path="/shared/home/cac8967/HW4/Bedtools"
+
+cd $output_path
+
+awk '$4 >= 0.0001' $expr_path > filtered_expr_loc.txt
+
+cd $output_path
+bedtools intersect -a $output_path/filtered_expr_loc.txt -b $methylation_path -wa | uniq > methylation_intersect.bed
+bedtools intersect -a $output_path/filtered_expr_loc.txt -b $H3K4me3_path -wa | uniq > H3K4me3_intersect.bed
+bedtools intersect -a $output_path/filtered_expr_loc.txt -b $H3K27ac_path -wa | uniq > H3K27ac_intersect.bed
+
+```
+
+```{r}
+# Load data
+cNames = c("chrom", "start", "end", "score", "gene_id", "gene_name")
+expr_data <- read.table("filtered_expr_loc.txt", col.names=cNames)
+methylation <- read.table("methylation_intersect.bed", col.names=cNames)
+H3K4me3 <- read.table("H3K4me3_intersect.bed", col.names=cNames)
+H3K27ac <- read.table("H3K27ac_intersect.bed", col.names=cNames)
+
+
+# Create violin plots
+ggplot() +
+  geom_violin(data = methylation, aes(x = "Methylation", y = log10(score)), fill = "blue") +
+  geom_violin(data = H3K4me3, aes(x = "H3K4me3", y = log10(score)), fill = "red") +
+  geom_violin(data = H3K27ac, aes(x = "H3K27ac", y = log10(score)), fill = "purple") + 
+  geom_violin(data = expr_data, aes(x = "Background", y = log10(score)), fill = "gray") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black") + 
+  labs(x = "", y = "Log10(Expression)", title = "Violin Plot of Gene Expression Levels") +
+  theme_minimal()
+
+```
+
+**Could you find that the higher methylation signals repress the gene expression?**
+
+```         
+Yes, I found that the higher methylation signals repress the gene expression. Looking at the violin plots shown above, we see that the Methylation plot (blue) has a much larger concentration located below the log10(Expression) = 0 line compared to the background and especially compared to H3K27ac and H3K4me3, indicating that the gene expressions have been supressed.
+```
+
+</br>
+
+### Part II. HiC
+
+Genome architecture plays a key role in nuclear functions. The spatial arrangement and proximity of genes have been linked to biological functions, such as gene replication, regulation, and transcription. The Hi-C technique allows researchers to extract the interaction frequency for all loci of a genome at high-throughput and at a genome-wide scale. In this part, we will learn how the HiC data integrates with other epigenetic data and genome architecture affects gene expression in prostate cancer.
+
+#### Part II.1
+
+We will be working with subsampled .fastq files generated by Hi-C technique (`/shared/courseSharedFolders/133853/HW4/HiC/HiC_subreads`) and follow the pipeline for runHiC (<http://xiaotaowang.github.io/HiC_pipeline/quickstart.html>). The Quick Start documentation is very clear, and if you're interested you can try going through the process yourself. Cross-referencing <https://github.com/XiaoTaoWang/HiC_pipeline/blob/master/scripts/runHiC> will help you understand the argument specifications in case of ambiguity.
+
+**However, we've run it for you so you can have PART of the relevant output files, but you will still be asked to write the commands as if you had run them.**
+
+</br>
+
+**Problem 4**
+
+1.  Create a new environment with Python 3.7. Make sure use exactly the same version for python and the dependencies. Using Python 2 will create issues! Please follow the instructions here: `/shared/courseSharedFolders/133853/HW4/hic_setup.sh`
+
+2.  The runHiC script takes the bwa index as the input. This can be found under `/shared/courseSharedFolders/133853/HW4/HiC/data/hg38/`. We've run `samtools faidx` on the reference genome (`hg38.fa`) for you (You don't need to run this step).
+
+3.  **Note that the index file is NOT the same as the one we used for bismark. What is the main difference between bowtie and bwa in practice?**
+
+```         
+Bowtie is an aligner method that is based on the Burrows-Wheeler Transform (BWT) and uses an FM-index to align short reads to a reference genome in a time-efficient manner. BWA is an aligner method that is also based on the Burrows Wheeler Transform (BWT) abd uses an FM-index to align longer reads to a reference genome in a less time-efficient manner. The main differece between the two is therefore that Bowtie is faster and can only align short reads whereas BWA is slower and can align longer reads.  
+```
+
+</br>
+
+**Problem 5**
+
+1.  Assume your current directory is `/shared/courseSharedFolders/133853/HW4/HiC/workspace/`. Be VERY careful with relative paths. These links will be helpful: <http://xiaotaowang.github.io/HiC_pipeline/quickstart.html> <https://github.com/XiaoTaoWang/HiC_pipeline/blob/master/scripts/runHiC>
+
+2.  To avoid confusion over path specification, assume that `HiC/data/HiC_subreads/` only contains `HiC_subreads_1.fastq` and `HiC_subreads_2.fastq`. These two files contain subsets of all the reads in the Quick Start tutorial. You can zip the files and move them to a separate folder. However, as long as you specify the correct file format, the files will be automatically zipped.
+
+**Write runHiC commands (mapping+filtering+binning, or pileup).**
+
+```{bash eval=FALSE}
+# Assume you are working in /shared/courseSharedFolders/133853/HW4/HiC/workspace/ 
+runHiC pileup -p ../data/ -g hg38 -f HiC_subreads -F FASTQ -A bwa-mem -t 10  --chromsizes-file ../data/hg38.chrom.sizes --logFile runHiC.log
+
+```
+
+**Perform Experiment Quality Assessment. Put here the output `*.stats` and plot `*.png` for the summary group `allReps` ONLY.**
+
+**Hint:** <http://xiaotaowang.github.io/HiC_pipeline/quality.html>
+
+```{bash eval=FALSE}
+path="/shared/home/cac8967/HW4/HiC/workspace"
+
+cd $path
+
+runHiC mapping -p ../data/ -g hg38 -f HiC_subreads -F FASTQ -A bwa-mem -t 10 --chromsizes-file ../data/hg38/hg38.chrom.sizes --logFile runHiC-mapping.log
+
+runHiC filtering --pairFolder pairs-hg38/ --logFile runHiC-filtering.log --nproc 10
+
+# or runHiC pileup -p ../data/ -g hg38 -f HiC_subreads -F FASTQ -A bwa-mem -t 10  --chromsizes-file ../data/hg38/hg38.chrom.sizes --logFile runHiC.log
+
+runHiC quality -m datasets.tsv -L filtered-hg38
+```
+
+```         
+000_SequencedReads:  30000
+    010_DoubleSideMappedReads:  23204
+    020_SingleSideMappedReads:  5600
+    030_UnmappedReads:  1196
+100_NormalPairs:  23204
+    110_AfterFilteringReads:  23054
+    130_DuplicateRemoved:  150
+400_TotalContacts:  23054
+    410_IntraChromosomalReads:  12200
+        412_IntraLongRangeReads(>=20Kb):  5738
+        412_IntraShortRangeReads(<20Kb):  6462
+    420_InterChromosomalReads:  10854
+
+Critical Indicators:
+Double Unique Mapped Ratio = 23204 / 30000 = 0.7735
+Long-Range Ratio = 5738 / 23054 = 0.2489
+Data Usage = 23054 / 30000 = 0.7685
+```
+
+```{r, echo=FALSE}
+knitr::include_graphics("q21.png")
+```
+
+**Based on your results, how is the quality of this subsampled data? Could you describe the QC criteria of Hi-C data?**
+
+```         
+The subsampled data is fairly good. The Double Unique Mapping Ratio of 0.7735 is relatively high, which indicates that most of the reads were successfully mapped to the genome. The Long Range Ratio of 0.2489 is relatively low (although > 0.15), indicating that while the experiment was not failed, only a portion of the reads represent longer-range interactions. The Data Usage of 0.7685 is relatively high, indicating that a large portion of the sequenced reads were usable for downstream analysis. In all, the quality of the subsampled Hi-C data appears to be fairly good, but improvements in the long range interactions would better enhance its quality. The QC criteria of Hi-C data includes assessing mapping quality, identifying and filtering out PCR duplicates, examining the proportion of long-range interactions, and evaluating the overall data usage efficiency.
+```
+
+</br>
+
+#### Part II.2 Extra Credit
+
+In II.1, you have learned how to generate a genomic interaction matrix on the example file. Here we provided a genomic interaction data on chr21 in prostate cancer (`shared/courseSharedFolders/133853/HW4/HiC/data/chr21.chr21_10000.cool`). We have normalized this data at 10k resolution (cooler balance) and performed loop calling with a 10% CTCF model (peakachu score_genome).
+
+-   cooler (<https://cooler.readthedocs.io/en/latest/>) can perform normalization.
+-   peakachu (<https://github.com/tariks/peakachu>) can perform loop calling on Hi-C data.
+-   higlass (<https://higlass.io/>) can help with visualization.
+
+For educational purposes (not for credit) you also can go to <https://data.4dnucleome.org/higlass-view-configs/51d28485-5f94-465d-b2ec-3bf011754360/>, select "Add Data" and play around with the tool to generate plots.
+
+</br>
+
+**How many loops with \>0.9 confidence can you find? Run peakachu pool to regenerate `shared/courseSharedFolders/133853/HW4/HiC/workspace/chr21.loops.bedpe`.**
+
+```{bash eval=FALSE}
+# YOUR BASH SCRIPTS HERE (Write the codes to regenerate chr21.chr21_10000.mcool and chr21.loops.bedpe)
+output_path="/shared/home/cac8967/HW4/bonus"
+cool_path="/shared/home/cac8967/HW4/bonus/chr21.chr21_10000.cool"
+
+cd $output_path
+
+cooler zoomify --balance -r 10000 chr21.chr21_10000.cool -o chr21.chr21_10000.mcool
+
+peakachu score_genome -r 10000 --clr-weight-name weight -p chr21.chr21_10000.mcool::resolutions/10000 -O chr21.loops.bedpe -m down10.ctcf.pkl
+
+peakachu pool -r 10000 -i chr21.loops.bedpe -o chr21.loops.0.90.bedpe -t 0.90
+
+```
+
+</br>
+
+**Draw a genomic contact heatmap to show the interaction in chr21. Are there any highly interactive regions?**
+
+**Hint:** You can use higlass in Python to generate a heatmap with a.mcool file. We have provided this file for you in `shared/courseSharedFolders/133853/HW4/HiC/workspace/chr21.chr21_10000.mcool`. The 10000 means it was normalized at 10k resolution.
+
+```{python eval=FALSE}
+# YOUR PYTHON SCRIPTS HERE 
+# cd /shared/home/cac8967/HW4/HiC/workspace
+import higlass as hg
+
+tileset = hg.cooler("../data/chr21.chr21_10000.mcool")
+track = tileset.track("heatmap")
+view = hg.view(track, width=6)
+view_lock = hg.lock(view)
+view.locks(view_lock)
+
+
+import higlass as hg
+
+# Remote data source (tileset)
+tileset1 = hg.remote(
+    uid="CQMd6V_cRw6iCI_-Unl3PQ",
+    server="https://higlass.io/api/v1/",
+    name="Rao et al. (2014) GM12878 MboI (allreps) 1kb",
+)
+
+# Local tileset
+tileset2 = hg.cooler("../data/chr21.chr21_10000.mcool")
+
+# Create a `hg.HeatmapTrack` for each tileset
+track1 = tileset1.track("heatmap")
+track2 = tileset2.track("heatmap")
+
+# Create two independent `hg.View`s, one for each heatmap
+view1 = hg.view(track1, width=6)
+view2 = hg.view(track2, width=6)
+
+# Lock zoom & location for each `View`
+view_lock = hg.lock(view1, view2)
+
+# Concatenate views horizontally and apply synchronization lock
+(view1 | view2).locks(view_lock)
+
+```
+
+```         
+# INSERT YOUR HIGLASS HEATMAP HERE
+
+Viewconf(editable=True, viewEditable=True, tracksEditable=True, zoomFixed=None, compactLayout=None, exportViewUrl=None, trackSourceServers=None, views=[
+View(layout=Layout(x=0, y=0, w=6, h=6, moved=None, static=None), tracks=Tracks[TrackT](left=None, right=None, top=None, bottom=None, center=[HeatmapTrac
+k(tilesetUid='CQMd6V_cRw6iCI_-Unl3PQ', server='https://higlass.io/api/v1/', type='heatmap', uid='cb99ddc6-fb56-4a41-ad6b-c5e133ef1b34', width=None, heig
+ht=None, options={'name': 'Rao et al. (2014) GM12878 MboI (allreps) 1kb'}, data=None, position=None, transforms=None)], whole=None, gallery=None), uid='
+392b3b14-84c3-453b-8a7a-156acad8bd88', autocompleteSource=None, chromInfoPath=None, genomePositionSearchBox=None, genomePositionSearchBoxVisible=None, i
+nitialXDomain=None, initialYDomain=None, overlays=None, selectionView=None, zoomFixed=None, zoomLimits=(1.0, None)), View(layout=Layout(x=6, y=0, w=6, h
+=6, moved=None, static=None), tracks=Tracks[TrackT](left=None, right=None, top=None, bottom=None, center=[HeatmapTrack(tilesetUid='14ba7d8f8a42985bfabb1
+830ee8e9c7b', server='http://localhost:41689/tilesets/api/v1/', type='heatmap', uid='3f863b4a-47b9-467c-a3d6-336757704062', width=None, height=None, opt
+ions=None, data=None, position=None, transforms=None)], whole=None, gallery=None), uid='10d2c6dd-3d24-456d-afa9-49a6f8d34b32', autocompleteSource=None, 
+chromInfoPath=None, genomePositionSearchBox=None, genomePositionSearchBoxVisible=None, initialXDomain=None, initialYDomain=None, overlays=None, selectio
+nView=None, zoomFixed=None, zoomLimits=(1.0, None))], zoomLocks=ZoomLocks(locksByViewUid={'392b3b14-84c3-453b-8a7a-156acad8bd88': '748715a7-6bb6-4d76-80
+0c-8084bcbfc671', '10d2c6dd-3d24-456d-afa9-49a6f8d34b32': '748715a7-6bb6-4d76-800c-8084bcbfc671'}, locksDict={'748715a7-6bb6-4d76-800c-8084bcbfc671': Lo
+ck(uid='748715a7-6bb6-4d76-800c-8084bcbfc671', 392b3b14-84c3-453b-8a7a-156acad8bd88=(1.0, 1.0, 1.0), 10d2c6dd-3d24-456d-afa9-49a6f8d34b32=(1.0, 1.0, 1.0
+))}), locationLocks=LocationLocks(locksByViewUid={'392b3b14-84c3-453b-8a7a-156acad8bd88': '748715a7-6bb6-4d76-800c-8084bcbfc671', '10d2c6dd-3d24-456d-af
+a9-49a6f8d34b32': '748715a7-6bb6-4d76-800c-8084bcbfc671'}, locksDict={'748715a7-6bb6-4d76-800c-8084bcbfc671': Lock(uid='748715a7-6bb6-4d76-800c-8084bcbf
+c671', 392b3b14-84c3-453b-8a7a-156acad8bd88=(1.0, 1.0, 1.0), 10d2c6dd-3d24-456d-afa9-49a6f8d34b32=(1.0, 1.0, 1.0))}), valueScaleLocks=ValueScaleLocks(lo
+cksByViewUid={}, locksDict={}), chromInfoPath=None)
+```
+
+</br>
+
+#### Part II.3
+
+Transcription factors (TFs) help construct the chromatin loops. TFs, in conjunction with other proteins such as cohesin and CTCF, are involved in the formation and maintenance of chromatin loops. These loops can regulate gene expression by bringing distant genomic regions into close proximity (Kadauke & Blobel, 2009).
+
+</br>
+
+**Problem 6**
+
+**Could you find the open regions in the loop anchors? What factors bind in the loop anchors? What potential roles may these factors play?**
+
+**Hint 1:** Follow the instructions to install Homer: <http://homer.ucsd.edu/homer/introduction/install.html>
+
+**Hint 2:** The `shared/courseSharedFolders/133853/HW4/HiC/workspace/chr21.loops.bedpe` contains the informaiton on loop anchors; `shared/courseSharedFolders/133853/HW4/tumor_ATAC_peaks.bed` is the prostate cancer ATAC-seq peaks file.
+
+```{bash eval=FALSE}
+# wget http://homer.ucsd.edu/homer/configureHomer.pl
+# perl configureHomer.pl -install 
+
+output_path="/shared/home/cac8967/HW4/Homer"
+loops_bed_path="/shared/courseSharedFolders/133853/HW4/HiC/workspace/chr21.loops.bedpe"
+tumor_bed_path="/shared/courseSharedFolders/133853/HW4/data/tumor_ATAC_peaks.bed"
+reference_path="/shared/home/cac8967/HW4/Homer/bwa_index/Homo_sapiens.GRCh38.dna.primary_assembly.fa"
+
+cd $output_path
+awk '{print $1"\t"$2"\t"$6}' $loops_bed_path | sort | uniq > loop_anchors_union.bed
+bedtools intersect -a $tumor_bed_path -b $output_path/loop_anchors_union.bed -wa | uniq > intersect.bed
+awk '{print "21\t"$2"\t"$3"\t"$4"\t"$5}' intersect.bed | sort | uniq > intersect_modified.bed
+
+findMotifsGenome.pl "$output_path/intersect_modified.bed" "$reference_path" "$output_path"
+
+```
+
+Homer Known Results:
+
+```{r, echo=FALSE}
+knitr::include_graphics("q23a.png")
+```
+
+Homer de Novo Results:
+
+```{r, echo=FALSE}
+knitr::include_graphics("q23b.png")
+```
+
+</br>
+
+#### Part II.4
+
+Normally, histone modification H3K27ac marks the enhancer regions on the genome, and H3K4me3 marks the promoter regions. Use the prostate tumor H3K27ac and H3K4me3 peaks files from I.2 here.
+
+**Hint 1:** Look at `shared/courseSharedFolders/133853/HW4/HiC/workspace/chr21.loops.bedpe` and consider how you will deal with this data. Notes on BEDPE format: <https://bedtools.readthedocs.io/en/latest/content/general-usage.html>
+
+**Hint 2:** Other files to examine: `shared/courseSharedFolders/133853/HW4/data/ProstateCancer_H3K4me3_peaks.bed`, `shared/courseSharedFolders/133853/HW4/data/ProstateCancer_H3K27ac_peaks.bed`
+
+</br>
+
+**Problem 7**
+
+**Based on the loop file, could you find the loops that contact an enhancer region with a gene promoter region on chr21? Do these target genes express higher than the genes without loop structure?**
+
+```{bash eval=FALSE}
+# YOUR BASH SCRIPTS HERE 
+output_path="/shared/home/cac8967/HW4/p7"
+loops_bed_path="/shared/courseSharedFolders/133853/HW4/HiC/workspace/chr21.loops.bedpe"
+H3K4me3_path="/shared/home/cac8967/HW4/Bedtools/H3K4me3_intersect.bed"
+H3K4me3_peak_path="/shared/courseSharedFolders/133853/HW4/data/ProstateCancer_H3K4me3_peaks.bed"
+H3K27ac_path="/shared/home/cac8967/HW4/Bedtools/H3K27ac_intersect.bed"
+H3K27ac_peak_path="/shared/courseSharedFolders/133853/HW4/data/ProstateCancer_H3K27ac_peaks.bed"
+chr21_path="/shared/courseSharedFolders/133853/HW4/data/Expr_loc_chr21.txt"
+
+cd $output_path
+
+awk '{print $1"\t"$2"\t"$6}' $loops_bed_path | sort | uniq > loops.bed
+
+
+bedtools intersect -a $H3K27ac_peak_path -b $H3K4me3_peak_path -wa | uniq > promoter_enhancer.bed
+bedtools intersect -a $output_path/promoter_enhancer.bed -b $output_path/loops.bed -wa | uniq > promoter_enhancer_loops.bed
+bedtools intersect -a $chr21_path -b $output_path/promoter_enhancer_loops.bed -wa | uniq > promoter_enhancer_loops_genes.bed
+```
+
+```{r eval=FALSE}
+# YOUR R SCRIPTS HERE 
+# Load data
+cNames = c("chrom", "start", "end", "score", "gene_id", "gene_name")
+expr_data <- read.table("Expr_loc_chr21.txt", col.names=cNames)
+promoter_enchancer_loops <- read.table("promoter_enhancer_loops_genes.bed", col.names=cNames)
+no_loops <- subset(expr_data, 
+                   !gene_name %in% unique(promoter_enchancer_loops$gene_name))
+
+# Create violin plots
+ggplot() +
+  geom_violin(data = promoter_enchancer_loops, aes(x = "Loops", y = log10(score)), fill = "red") +
+  geom_violin(data = no_loops, aes(x = "No Loops", y = log10(score)), fill = "grey") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black") + 
+  labs(x = "", y = "Log10(Expression)", title = "Violin Plot of Gene Expression Levels", subtitle = "in Chromosome 21 Promoter-Enchancer Loops vs No Loops") +
+  theme_minimal()
+
+```
+
+```         
+Yes, these target genes (that contact an enhancer region with a gene promoter region on chr21) express higher than the genes without loop structure. As shown in above, the violin plot of the target genes located within these loops (red violin plot) has a large concentration above the line y = 0. This indicates that these looped regions have enhanced expression levels, especially in comparison to the genes without loop structure (gray violin plot) within chromosome 21. 
+```
+
+</br>
+
+### Part III. Hidden Markov Model and TAD boundaries
+
+Topologically associating domains (TADs) define genomic intervals, where sequences within a TAD physically interact more frequently with each other than with sequences outside the TAD. TADs are often defined by HiC (<https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3149993/>), an experimental technique designed to study the three-dimensional architecture of genomes. HiC generates PE sequenced data, where the two mate pairs indicate two genomic regions that are might be far apart in the genome, but physically interact with each other.
+
+If we look across the genome in bins (40kb in the early paper, but now can go down to 5-10kb with deeper sequencing), we could find reads that are mapped there and check whether their interacting mate pairs are mapped upstream or downstream. In each bin, we can calculate a directional index (DI) to quantify the degree of upstream or downstream bias of a given bin (for more details, see <https://www.nature.com/articles/nature11082>).
+
+**For this HW, we ask you to implement a hidden Markov Model (Viterbi) to find regions with upstream bias (DI \< 0) and those with downstream bias (DI \> 0), even though the DI in individual bins might have some noise. This way, TAD boundaries could be discovered as clusters of bins from negative DIs to positive DIs (see Supplementary Figure 12b).**
+
+**For simplicity, we will only have two hidden states (upstream, downstream), and use the following HMM parameters.**
+
+```         
+###### The following setting does not necessarily capture the real data distribution, but just to help your implementation:
+
+Initial probability: 
+
+upstream = 0.5, downstream = 0.5
+
+Transition probability: 
+
+Pb(up to up) = Pb(dn to dn) = 0.9, Pb(up to dn) = Pb(dn to up) = 0.1
+
+Emission probabilities:
+
+P{<-1200, [-1200,-800), [-800,-500), [-500,0), [0,500), [500,800), [800, 1200), >= 1200 | upstream} = (0.01, 0.01, 0.02, 0.04, 0.65, 0.15, 0.08, 0.04)
+
+P{<-1200, [-1200,-800), [-800,-500), [-500,0), [0,500), [500,800), [800, 1200), >= 1200 | downstream} = (0.04, 0.08, 0.15, 0.65, 0.04, 0.02, 0.01, 0.01)
+```
+
+</br>
+
+**Problem 8**
+
+**Given the DI file (`data/ESC.Dixon_2015.DI.chr21.txt`), implement and utilize the Viterbi algorithm to predict the hidden states of the Hi-C data. Visualize your result with a graph utilizing the following: (a) midpoint of genomic bin on the x-axis; (b) DI score per bin on the y-axis; (c) color: hidden state of the HMM.**
+
+**Hint1**: Examples HMM code can be found at: <http://www.adeveloperdiary.com/data-science/machine-learning/implement-viterbi-algorithm-in-hidden-markov-model-using-python-and-r/>
+
+**Hint2**: The observations are continuous or have too many discrete values. Try binning them into a few discrete regions. Use `cut` function built in R.
+
+**Hint 3:** The columns in the DI file are chromosome, start, end, and DI score, respectively.
+
+**Hint 4:** The code for Viterbi should run very quickly. If it takes more than a couple of minutes, you might want to check your code for correctness and/or efficiency.
+
+**Note:** We will accept Python code as well. In which case, remember to change {r} to {python engine='python', eval=FALSE}.
+
+**COMMENT YOUR CODE.**
+
+```{r}
+# YOUR R SCRIPTS HERE: plot DI score against midpoint of the genomic region 
+# Read in data
+DI_data <- read.table("ESC.Dixon_2015.DI.chr21.txt", 
+                      col.names= c("chr", "start", "end", "score"))
+
+# Calculate midpoint
+DI_data$midpoint <- (DI_data$start + DI_data$end) / 2
+# Create bins 
+DI_data$DI_bin <- cut(DI_data$score, breaks = c(-Inf, -1200, -800, -500, 0, 500, 800, 1200, Inf))
+
+# Plot midpoints
+ggplot(DI_data, aes(x = midpoint, y = score)) +
+  geom_point() +
+  labs(x = "Midpoint of Genomic Region", y = "DI Score",
+    title = "DI Score vs. Midpoint of Genomic Region") +
+  theme_minimal()
+```
+
+```{r}
+# YOUR R SCRIPTS HERE: define function for Viterbi algorithm 
+
+Viterbi = function(v, a, b, initial_distribution) {
+  T = length(v)  # Length of the observation sequence
+  M = nrow(a)   # Number of states
+  
+  # Initialize matrices to store intermediate results
+  prev = matrix(0, T - 1, M)  # most probable previous state
+  omega = matrix(0, M, T)      # highest probability of reaching each state
+  
+  # Initialize omega matrix
+  omega[, 1] = log(initial_distribution * b[, v[1]])
+  
+  # Recursively fill the matrices omega and prev
+  for (t in 2:T) {
+    for (s in 1:M) {
+      # Calculate the probabilities of transitioning
+      probs = omega[, t - 1] + log(a[, s]) + log(b[s, v[t]])
+      # Get the state that maximizes the probability
+      prev[t - 1, s] = which.max(probs)
+      # Get the highest probability
+      omega[s, t] = max(probs)
+    }
+  }
+  
+  # Find the most likely sequence of states
+  S = rep(0, T)  # Initialize
+  last_state = which.max(omega[, ncol(omega)])# Get state with the highest p
+  S[1] = last_state 
+  j = 2
+  
+  # Find the sequence of most probable states
+  for (i in (T - 1):1) {
+    S[j] = prev[i, last_state]
+    last_state = prev[i, last_state]
+    j = j + 1
+  }
+  
+  # Replace state indices with upstream and downstream
+  S[which(S == 1)] = 'upstream'
+  S[which(S == 2)] = 'downstream'
+  
+  # Reverse the state sequence to get the correct order
+  S = rev(S)
+  
+  return(S)  # Return the most likely sequence of states
+}
+
+```
+
+```{r}
+# YOUR R SCRIPTS HERE: specify parameters 
+M=2 # M - hidden states
+K=8 # K - output type
+A = matrix(c(0.9,0.1,0.1,0.9), M, M) # A - Transition Probabilities
+B = matrix(c(0.01, 0.01, 0.02, 0.04, 0.65, 0.15, 0.08, 0.04,
+0.04, 0.08, 0.15, 0.65, 0.04, 0.02, 0.01, 0.01),
+M, K, byrow = TRUE) # B - Emission Probabilities
+initial_distribution = c(0.5, 0.5) # probability of initial distribution
+
+```
+
+```{r}
+# YOUR R SCRIPTS HERE: run Viterbi and plot results (DI score against midpoint)
+# run Viterbi function 
+hidden_states <- Viterbi(DI_data$DI_bin, A, B, initial_distribution)
+
+# plot hidden states
+ggplot(DI_data, aes(x = midpoint, y = score, color = hidden_states)) +
+  geom_point() +
+  labs(x = "Midpoint of Genomic Region", y = "DI Score",
+    title = "DI Score vs. Midpoint of Genomic Region") +
+  theme_minimal()
+```
+
+</br>
+
+------------------------------------------------------------------------
+
+**Reference:**
+
+Kadauke, S., & Blobel, G. A. (2009). Chromatin loops in gene regulation. Biochimica et biophysica acta, 1789(1), 17--25. <https://doi.org/10.1016/j.bbagrm.2008.07.002>
+
+van Berkum, N. L., Lieberman-Aiden, E., Williams, L., Imakaev, M., Gnirke, A., Mirny, L. A., Dekker, J., & Lander, E. S. (2010). Hi-C: a method to study the three-dimensional architecture of genomes. Journal of visualized experiments : JoVE, (39), 1869. <https://doi.org/10.3791/1869>
+
+Dixon, J. R., Selvaraj, S., Yue, F., Kim, A., Li, Y., Shen, Y., Hu, M., Liu, J. S., & Ren, B. (2012). Topological domains in mammalian genomes identified by analysis of chromatin interactions. Nature, 485(7398), 376--380. <https://doi.org/10.1038/nature11082>

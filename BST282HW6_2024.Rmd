@@ -1,0 +1,590 @@
+---
+title: "BST282-HW6"
+author: "Caitlin Cheung"
+date: "`r Sys.Date()`"
+output: html_document
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r,warning=F,message=F,include=F}
+library(ggplot2)
+library(cowplot)
+library(limma)
+library(survival)
+library(survminer)
+library(corrplot)
+library(MAGeCKFlute) # BiocManager::install("MAGeCKFlute")
+library(pheatmap)
+library(stats)
+library(cluster)
+library(ggplot2)
+library(dplyr)
+library(readr)
+library(boot)
+library(tidyverse)
+```
+
+## Part I: Data exploration on TCGA
+
+The Cancer Genome Atlas (TCGA) is an NCI project to comprehensively
+profile over 10K tumors in 33 cancer types. In this homework, we are
+going to explore TCGA data analysis.
+
+Q1. Go to TCGA GDC website (<https://portal.gdc.cancer.gov/>) and
+explore the GDC data portal. How many glioblastoma (GBM) cases in TCGA
+meet ALL of the following requirements? Include a screenshot.
+
+1.  Male;
+
+2.  Diagnosed at the age above 45;
+
+3.  Still alive.
+
+There are **43 GBM cases** in TCGA that meet all of the following
+requirements.
+
+```{r}
+knitr::include_graphics("q1.png")
+```
+
+Q2. TCGA GDC (<https://portal.gdc.cancer.gov/>) and Broad Firehose
+(<http://firebrowse.org/>) both provide processed TCGA data for
+downloading and downstream analysis. You can download clinical data of
+GBM, but we have provided the relevant file (downloaded as of
+04/21/2024) for your convenience
+(/shared/courseSharedFolders/133853/HW6/data/clinical.tsv). What's the
+average diagnosed age of all GBM patients?
+
+```{r}
+# INCLUDE R CODE HERE
+clinical_data <- read_tsv("data/clinical.tsv", show_col_types = FALSE)
+mean(as.numeric(clinical_data$age_at_diagnosis), na.rm = TRUE)
+```
+
+The average diagnosed age of all GBM patients is 21104 days, or roughly
+**58 years**.
+
+## Part II -- Tumor Subtypes
+
+Q1. GBM is one of the earliest cancer types to be processed by TCGA, and
+the expression profiling was initially done with Affymetrix microarray.
+Also, with brain cancer, it is hard to get sufficient number of normal
+samples. We provide the pre-processed expression matrix in
+(GBM_expr.txt) where samples are columns and genes are rows. Do a
+K-means (k=3) clustering from all the genes and the most variable 2000
+genes. Do tumor and normal samples separate in different clusters? Do
+the tumors samples consistently separate into 2 clusters, regardless of
+whether you use all the genes or most variable genes? Hint: Create PCA
+plots to help answer this question.
+
+```{r}
+# INCLUDE R CODE HERE
+
+set.seed(23)
+expr_matrix <- read.table("data/GBM_expr.txt", header = TRUE, row.names = 1)
+
+# All genes
+scaled_expr_matrix <- scale(expr_matrix)
+kmeans_all <- kmeans(t(scaled_expr_matrix), centers = 3)
+
+# Top 2000 genes
+variance <- apply(expr_matrix, 1, var)
+top_genes <- names(sort(variance, decreasing = TRUE)[1:2000])
+expr_matrix_top <- expr_matrix[top_genes, ]
+scaled_expr_matrix_top <- scale(expr_matrix_top)
+kmeans_top <- kmeans(t(scaled_expr_matrix_top), centers = 3)
+
+# Create PCA plots
+pca_all <- prcomp(t(expr_matrix))
+pca_top <- prcomp(t(scaled_expr_matrix_top))
+
+all <- data.frame(pca_all$x[,1:2], 
+                  cluster = factor((kmeans_all$cluster)), 
+                  sample = rownames(pca_all$x)) 
+all |>  mutate(sample_type = if_else(grepl("normal", sample), "normal", "tumor"))|>
+  ggplot(aes(x = PC1, y = PC2, color = cluster, shape = sample_type)) +
+  geom_point(size = 3) +
+  labs(title = "PCA Plot for All Genes", 
+       subtitle = "by kmeans cluster and sample type", 
+       x = "PC1", y = "PC2", 
+       color = "Kmeans Cluster", shape = "Sample Type") +
+  theme_minimal()
+
+# Plot PCA for top 2000 genes
+top <- data.frame(pca_top$x[,1:2], 
+                  cluster = factor((kmeans_top$cluster)), 
+                  sample = rownames(pca_top$x)) 
+top |>  mutate(sample_type = if_else(grepl("normal", sample), "normal", "tumor"))|>
+  ggplot(aes(x = PC1, y = PC2, color = cluster, shape = sample_type)) +
+  geom_point(size = 3) +
+  labs(title = "PCA Plot for Top Genes", 
+       subtitle = "by kmeans cluster and sample type", 
+       x = "PC1", y = "PC2", 
+       color = "Kmeans Cluster", shape = "Sample Type") +
+  theme_minimal()
+
+```
+
+The tumor and normal samples separate in different clusters in both
+instances, as shown by the fact that the circular shapes (normal) are
+always clustered together and separate from the triangular shapes
+(tumor) on the PCA graphs. PC1 seems to be highlighting the difference
+between these two sample types. Moreover, the k-means clustering labels
+all the normal samples as cluster 3 (blue) on the all-genes PCA plot and
+cluster 2 (green) on the top-genes PCA plot. This shows that the sample
+types are not only clustered together in the PCA plot, but by the
+k-means clustering algorithm as well.
+
+The tumors samples consistently separate into two clusters, regardless
+of whether you use all the genes or most variable genes. We see in both
+PCA plots that the k-means clusters corresponding to the tumor samples
+form very distinct clusters. The differences between these two tumor
+clusters seem to be highlighted by PC2.
+
+Q2. LIMMA is a BioConductor package that does differential expression
+between microarrays, RNA-seq, and can remove batch effects (especially
+if you have experimental design with cmplex batches). Use LIMMA to see
+how many genes are differentially expressed between the two GBM subtypes
+(with FDR \< 0.05 and logFC threshold of 1.5)?
+
+```{r}
+# INCLUDE R CODE HERE
+
+clusters <- data.frame(cluster = kmeans_all$cluster, 
+                       sample = names(kmeans_all$cluster))
+
+metadata <- clusters |> filter(cluster != 3) |> 
+  mutate(cluster = as.factor(cluster))
+tumor_expr_matrix <- expr_matrix[,metadata$sample]
+design <- model.matrix(~ cluster, data = metadata)
+
+# Fit linear model
+colnames(design) = c("cluster1", "cluster2")
+fit <- lmFit(tumor_expr_matrix, design)
+fit <- eBayes(fit)
+results <- topTable(fit, coef = "cluster2", number = Inf)
+
+# Multiple testing using FDR correction
+results$adj_p_value <- p.adjust(results$P.Value, method = "fdr")
+
+# Filter DE genes
+significant_genes <- subset(results, adj_p_value < 0.05 & abs(logFC) > 1.5)
+num_significant_genes <- nrow(significant_genes)
+print(paste("Number of differentially expressed genes:", num_significant_genes))
+
+```
+
+There are **386 genes** that are differentially expressed between the
+two GBM subtypes.
+
+Q3. From the DNA methylation profiles (GBM_meth.txt), how many genes are
+significantly differentially methylated between the two subtypes? Are
+DNA methylation associated with higher or lower expression of these
+genes? How many differentially expressed genes have an epigenetic (DNA
+methylation) cause?
+
+```{r}
+# INCLUDE R CODE HERE
+
+# Load DNA methylation data
+meth_matrix <- read.table("data/GBM_meth.txt", header = TRUE, row.names = 1)
+meth_matrix <- logit(as.matrix(meth_matrix)) 
+
+metadata <- clusters |> filter(cluster != 3) |> 
+  filter(sample %in% colnames(meth_matrix))
+tumor_meth_matrix <- meth_matrix[, metadata$sample]
+design <- model.matrix(~ cluster, data = metadata)
+
+colnames(design) = c("cluster1", "cluster2")
+fit <- lmFit(tumor_meth_matrix, design)
+fit <- eBayes(fit)
+results_meth <- topTable(fit, coef = "cluster2", number = Inf)
+
+# Multiple testing using FDR correction
+results_meth$adj_p_value <- p.adjust(results_meth$P.Value, method = "fdr")
+
+meth_significant_genes <- subset(results_meth, adj_p_value< 0.05 & abs(logFC) > 1.5)
+num_meth_significant_genes <- nrow(meth_significant_genes)
+print(paste("Number of differentially methylated genes:", num_meth_significant_genes))
+```
+
+There are **867 genes** that are differentially methylated between the
+two GBM subtypes.
+
+Q3.2 Are DNA methylation associated with higher or lower expression of
+these genes? How many differentially expressed genes have an epigenetic
+(DNA methylation) cause?
+
+```{r}
+
+merged_genes <- intersect(rownames(significant_genes), rownames(meth_significant_genes))
+expr_merged <- significant_genes[merged_genes,]
+meth_merged <- meth_significant_genes[merged_genes,]
+merged_avg_expressions <- data.frame(expression = expr_merged$logFC, 
+                                     methylation = meth_merged$logFC)
+corr <- cor(expr_merged$logFC, meth_merged$logFC)
+
+merged_avg_expressions |> ggplot(aes(x=expression, y = methylation)) + 
+  geom_point() + 
+  labs(title = "Methylation vs Expression", 
+       subtitle = paste("Correlation:", corr))
+
+merged_len <- nrow(merged_avg_expressions)
+
+print(paste("Correlation between DNA methylation and gene expression:", corr))
+print(paste("Number of differentially expressed genes with an epigenetic cause:", merged_len))
+```
+
+DNA methylation is associated with **lower expression** of the GBM
+differentially expressed genes, with a correlation of -0.54 between
+their logFC values. There are **70 differentially expressed genes** that
+have an epigenetic (DNA methylation) cause.
+
+Q4. With the survival data of the GBM tumors (GBM_clin.txt), make a
+Kaplan-Meier Curve to compare the two subtypes of GBM patients. Is there
+a significant difference in patient outcome between the two subtypes?
+
+```{r}
+# INCLUDE R CODE HERE
+
+surv_data <- read.table("data/GBM_clin.txt", header = TRUE)
+surv_data <- surv_data |> 
+  mutate(sample = gsub("-", ".", rownames(surv_data))) |> 
+  merge(clusters, by = "sample")         
+
+# Create survival object
+surv_object <- Surv(time = surv_data$days.to.death, event = surv_data$vital.status)
+
+# Perform Kaplan-Meier survival analysis
+km_fit <- survfit(surv_object ~ cluster, data = surv_data)
+
+# Plot Kaplan-Meier curve
+ggsurvplot(km_fit, data = surv_data, risk.table = FALSE, 
+                pval = TRUE, conf.int = FALSE, ggtheme = theme_minimal())
+
+#summary(km_fit)
+
+```
+
+Yes, there is a significant difference in patient outcome between the
+two subtypes. We see in the Kaplan-Meier curve that there is a clear
+difference in survival probability between clusters 1 and 2 where the
+probability curve is much steeper for cluster 2 than cluster 1
+indicating a lower rate of survival.
+
+Q5. Use the differential genes (say this is Y number of genes) between
+the two GBM subtypes as a gene signature to do a Cox regression of the
+tumor samples. Does it give significant predictive power of patient
+outcome?
+
+```{r}
+# INCLUDE R CODE HERE
+
+# Subset expression matrix for differential genes
+tumor_samples <- surv_data$sample
+diff_expr_matrix <- expr_matrix[rownames(significant_genes), tumor_samples]
+scaled_data <- scale(t(diff_expr_matrix))
+pca_res <- prcomp(scaled_data)
+pc1 <- pca_res$x[,1]
+
+combined_data <- surv_data |> select(days.to.death, vital.status) |> 
+  mutate(pc1 = pc1)
+
+# Fit Cox regression model
+cox_model <- coxph(Surv(days.to.death, vital.status) ~ ., data = combined_data)
+
+summary(cox_model)
+summary(cox_model)$coefficients[, "Pr(>|z|)"]
+
+```
+
+Yes, the differentially expressed genes give significant predictive
+power of patient outcome in the cox model. When used in the model, the
+PC1 variable (the first principal component of the differential gene
+expression matrix) had a statistically significant p-value of
+0.000498(\< 0.001), which means it is predictive of patient outcome in
+terms of days to death and vital status.
+
+Q6. Many studies use gene signatures to predict prognosis of patients.
+Take a look at this paper:
+<http://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1002240>.
+It turns out that most published gene signatures are not significantly
+more associated with outcome than random predictors. Write a script to
+randomly sample Y genes in this expression data as a gene signature and
+do Cox regression on the sampled signature to predict patient outcome.
+Automate the script and random sample followed by Cox regression 100
+times. How does your signature in Q5 compared to random signatures in
+predicting outcome?
+
+```{r}
+# INCLUDE R CODE HERE
+set.seed(123)
+
+# Function to perform Cox regression with a randomly sampled gene signature
+perform_cox_regression <- function(expr_matrix, surv_data, signature_size) {
+  
+  sampled_signature <- sample(rownames(expr_matrix), signature_size)
+  tumor_samples <- surv_data$sample
+  diff_expr_matrix <- expr_matrix[sampled_signature, tumor_samples]
+  scaled_data <- scale(t(diff_expr_matrix))
+  pca_res <- prcomp(scaled_data)
+  pc1 <- pca_res$x[,1]
+
+  combined_data <- surv_data |> select(days.to.death, vital.status) |> 
+  mutate(pc1 = pc1)
+
+  cox_model <- coxph(Surv(days.to.death, vital.status) ~ ., data = combined_data)
+  p_value <- summary(cox_model)$coefficients[, "Pr(>|z|)"]
+  
+  return(p_value)
+}
+
+
+signature_size <- 386
+num_iterations <- 100  
+pvalue_random <- numeric(num_iterations)
+for (i in 1:num_iterations) {
+  pvalue_random[i] <- perform_cox_regression(expr_matrix, surv_data, signature_size)
+}
+
+percent_significant = length(which(pvalue_random < 0.05)) / length(pvalue_random) * 100
+paste("Percent of iterations with significant p-value:", percent_significant, "%")
+```
+
+After running 100 simulations of randomly selecting 386 genes from the
+gene expression matrix and performing cox regression, 28% of the
+iterations produced significant p-values, meaning they had significant
+predictive power of patient outcome. Therefore, I do not agree with the
+paper that most published gene signatures are not significantly more
+associated with outcome than random predictors because the
+differentially expressed gene signatures had better predictive power
+than the randomly selected genes did.
+
+## Part III- CRISPR screens
+
+We will learn to analyze CRISPR screen data from this paper:
+<https://www.ncbi.nlm.nih.gov/pubmed/?term=26673326>. To identify
+therapeutic targets for glioblastoma (GBM), the author performed
+genome-wide CRISPR-Cas9 knockout (KO) screens in patient-derived GBM
+stem-like cell line (GSCs0131).
+
+MAGeCK tutorial: <https://sourceforge.net/p/mageck/wiki/Home/>
+<https://sourceforge.net/projects/mageck/>
+
+Q1. The MAGeCK uses Robust Rank Aggregation (RRA) for robust
+identification of CRISPR-screen hits, and outputs the summary results at
+both sgRNA and gene level. We already performed this for you and
+provided the relevant outputs in a folder for your convenience
+(/shared/courseSharedFolders/133853/HW6/MaGeCK_Files). Use MAGeCKFlute
+package to do a basic QC of the CRISPR screen data (e.g. read mapping,
+ribosomal gene selection, replicate consistency, etc). Make sure to
+include relevant figures and tables in your response. Comment on the
+quality of the data based on your results. Relevant file:
+OUT.countsummary.txt
+
+```{r}
+# INCLUDE R CODE HERE
+
+countsummary <- read.delim("MaGeCk_Files/OUT.countsummary.txt", check.names = FALSE)
+countsummary$Label = c("Day23_Rep1", "Day23_Rep2", "Day0_Rep1", "Day0_Rep2")
+# Gini index
+BarView(countsummary, x = "Label", y = "GiniIndex",
+        ylab = "Gini index", main = "Evenness of sgRNA reads")
+
+# Missed sgRNAs
+countsummary$Missed = log10(countsummary$Zerocounts)
+#BarView(countsummary, x = "Label", y = "Missed", fill = "#394E80",
+#        ylab = "Log10 missed gRNAs", main = "Missed sgRNAs")
+
+# Read mapping
+MapRatesView(countsummary)
+
+
+# replicate consistency
+replicates <- read.delim("MaGeCk_Files/OUT_separate.count_normalized.txt", check.names = FALSE)
+gene_expression <- replicates |> select(-sgRNA, -Gene)
+cor_matrix <- cor(gene_expression)
+cor_matrix_long <- as.data.frame(as.table(cor_matrix))
+names(cor_matrix_long) <- c("Var1", "Var2", "Correlation")
+
+ggplot(cor_matrix_long, aes(x = Var1, y = Var2, fill = Correlation)) +
+  geom_tile(color = "white") + 
+  scale_fill_gradient2(low = "blue", mid = "purple", high = "red", 
+                       midpoint = 0.96, limit = c(0.92,1), 
+                       space = "Lab", name="Correlation") +
+  labs(title = "Replicate Consistency", x = NULL, y = NULL) + 
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), 
+        legend.position = "bottom")
+
+
+# ribosomal gene selection 
+ribosome <- read.delim("MaGeCk_Files/ribosomal_subunits.tsv", check.names = FALSE)
+gene <- read.delim("MaGeCk_Files/OUT.gene_summary.txt", check.names = FALSE)
+intersected_genes <- intersect(gene$id, ribosome$GeneSymbol)
+
+paste("Ribosomal Gene Selection:", length(intersected_genes)/nrow(ribosome) * 100, "%")
+```
+
+The Gini Index is \< 0.1 for all samples (\~0.085 for Day 23 samples and
+\~0.075 for Day 0) and the read mapping is \> 60% for all samples (\~67%
+for Day 0 samples and \~ 64% for day 23 samples). Moreover, the
+correlations are very strong between all replicates, suggesting high
+replicate consistency. Lastly, there were 27 genes overlapping between
+the gene_summary list and the ribosomal_subunits list, which equates to
+about 54% of all ribosomal subunit genes , where we expect strong
+negative selection of ribosomal genes . In all, this quality control
+analysis revealed that the data is of relatively high quality.
+
+Q2. Analyze CRISPR screen data with MAGeCK to identify positive and
+negative selection genes. How many genes are selected as positive or
+negative selection genes, respectively, and what are their respective
+enriched pathways?
+
+```{r}
+# INCLUDE R CODE HERE
+gdata = ReadRRA("MaGeCk_Files/OUT.gene_summary.txt")
+sdata = ReadsgRRA("MaGeCk_Files/OUT.sgrna_summary.txt")
+
+
+# volcano plot 
+p1 = VolcanoView(gdata, x = "Score", y = "FDR", Label = "id")
+print(p1)
+
+p_selection_genes <- gdata |> filter(FDR < 0.05 & Score > 0)
+n_selection_genes <- gdata |> filter(FDR < 0.05 & Score < 0)
+
+p_geneList= p_selection_genes$Score
+names(p_geneList) = p_selection_genes$id
+enrich_pos = EnrichAnalyzer(geneList = p_geneList, 
+                            method = "HGT", type = "KEGG")
+n_geneList = n_selection_genes$Score
+names(n_geneList) = n_selection_genes$id
+enrich_neg = EnrichAnalyzer(geneList = n_geneList, 
+                            method = "HGT", type = "KEGG")
+
+paste("Genes selected as positive selection genes:", length(p_geneList))
+paste("Genes selected as negative selection genes:", length(n_geneList))
+
+EnrichedView(enrich_pos, mode = 2, top = 5, bottom = 0)
+EnrichedView(enrich_neg, mode = 2, top = 0, bottom = 5)
+```
+
+8 genes are selected as positive selection genes and 368 genes are
+selected as negative selection genes (with 8 positive genes and 112
+negative genes mapped in the KEGG enrichment analysis) . The enriched
+pathways in the positive selection genes are Renal cell carcinoma,
+Long-term potentiation, Notch signaling pathway, Prostate cancer, and
+TGF-beta signaling pathway. The top 5 enriched pathways in the negative
+selection genes are RNA polymerase, DNA replication, Aninoacyl-tRNA
+biosynthesis, Sulfer relay system, and Proteasome.
+
+## Part IV. Cancer immunology and immunotherapy
+
+Immune checkpoint inhibitors, which primarily activate CD8 T cells, have
+shown remarkable efficacy in melanoma (SKCM), but haven't worked as well
+in GBM patients. Let's explore the tumor immune microenvironment from
+TCGA data. Although the cancer patients in TCGA were not treated with
+immunotherapy, their response to other drugs and clinical outcome might
+be influenced by pre-treatment tumor immune microenvironment
+
+Q1. TIMER (<http://timer.cistrome.org/>) estimated the infiltration
+level of different immune cells of TCGA tumors using different immune
+deconvolution methods. CD8A and CD8B are two gene markers on CD8 T
+cells. On the Gene_DE module, compare the expression level of either
+CD8A or CD8B between GBM and SKCM (Metastatic Melanoma). Based on this,
+which cancer type have more CD8 T cells? Include figures to justify your
+response.
+
+```{r}
+knitr::include_graphics("q4a.png")
+knitr::include_graphics("q4b.png")
+```
+
+Based on these TIMER graphs, SKCM has higher median expression levels of
+both CD8A and CD8B than GBM which means that SKCM has more CD8 T-cells.
+
+Q2. On the Gene_Corr module, select both GBM and SKCM (Metastatic
+Melanoma), include CD8 T cells as the cell infiltrate. Check the
+following genes, PDCD1(PD1), CD274(PDL1), CTLA4 which are the targets of
+immune checkpoint inhibitors, to see whether their expression level is
+associated with immune cell infiltration in the GBM and SKCM tumors.
+Their higher expression usually indicate that T cells are in a
+dysfunctional state, which immune checkpoint inhibitors aim to revive.
+Include figures to justify your response.
+
+```{r}
+knitr::include_graphics("q4.2a.png")
+knitr::include_graphics("q4.2b.png")
+knitr::include_graphics("q4.2c.png")
+knitr::include_graphics("q4.2d.png")
+knitr::include_graphics("q4.2e.png")
+knitr::include_graphics("q4.2f.png")
+```
+
+Graph 1 (PDCD1 in GBM): There is a slight negative correlation between
+purity and gene expression level and a relatively strong positive
+correlation between infiltration level and gene expression level (Rho =
+0.387), suggesting that its expression is associated with immune cell
+infiltration in the GBM tumors.
+
+Graph 2 (PDCD1 in SKCM): There is a strong negative correlation between
+purity and gene expression level and a relatively strong positive
+correlation between infiltration level and gene expression level (Rho =
+0.376), suggesting that its expression is associated with immune cell
+infiltration in the SKCM tumors.
+
+Graph 3 (CD274 in GBM): There is a slight negative correlation between
+purity and gene expression level and a slight negative correlation
+between infiltration level and gene expression level (Rho = -0.087),
+suggesting that its expression is not associated with immune cell
+infiltration in the GBM tumors.
+
+Graph 4 (CD274 in SKCM): There is a strong negative correlation between
+purity and gene expression level and a strong positive correlation
+between infiltration level and gene expression level (Rho = 0.435),
+suggesting that its expression is associated with immune cell
+infiltration in the SKCM tumors.
+
+Graph 5 (CTLA4 in GBM): There is a negative correlation between purity
+and gene expression level and a relatively strong positive correlation
+between infiltration level and gene expression level (Rho = 0.347),
+suggesting that its expression is associated with immune cell
+infiltration in GBM tumors.
+
+Graph 6 (CTLA4 in SKCM): There is a negative correlation between purity
+and gene expression level and a relatively strong positive correlation
+between infiltration level and gene expression level (Rho = 0.385),
+suggesting that its expression is associated with immune cell
+infiltration in SKCM tumors.
+
+In all, there appears to be an association between PDCD1, CD274, and
+CTLA4 gene expression levels and immune cell infiltration in SKCM
+tumors. However, there is only an association between PDCD1 and CTLA4
+gene expression levels and immune cell infiltration in GBM tumors.
+
+Q3. On the Outcome module under Immune Association, select both GBM and
+SKCM, include CD8 T cell as the cell infiltrate, add tumor stage and
+patient age as the clinical variables to conduct survival analyses.
+Based on the Cox PH model, what factors are the most significantly
+associated with patient survival in each cancer type? Include a summary
+of each survival model (i.e. coefficients, p-values and etc.) and a
+graph of the Kaplan-Meier curve in your response. Use the Kaplan-Meier
+curve to evaluate how immune cell infiltration is associated with
+survival. Is CD8 T cell associated with patient survival in each cancer
+type?
+
+```{r}
+knitr::include_graphics("q4c.png")
+knitr::include_graphics("q4d.png")
+```
+
+Based on the survival analysis, T-Cell CD8+ and Age are associated with
+patient survival for GBM, where Age is the most significant factor.
+T-Cell CD8+, Age, Stage2, and Stage3 are associated with patient
+survival for SKCM, where Age and Stage4 are the most significant
+factors. Based on the Kaplan Meier curves, having higher T-Cell levels
+is a predictor for patient survival in SKCM, whereas having lower T-Cell
+levels is a predictor for patient survival in GBM.

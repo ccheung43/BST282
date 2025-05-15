@@ -1,0 +1,533 @@
+---
+title: "HW2"
+author: "Caitlin Cheung"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+## Part I: Differential expression
+
+In this HW, we will evaluate the differentially expressed genes and pathways between breast cancer and normal breast tissues. Our collaborator generated RNA-seq on ten pairs of breast tumors and matched adjacent normal tissues, located in /shared/courseSharedFolders/133853/HW2/raw_data1. The experiments were run in two batches, each batch with 5 pairs of samples, and the batch information is provided in batch.csv. We have run Salmon for gene quantification which is provided in HPC at /shared/courseSharedFolders/133853/HW2/raw_data1/Salmon_results. Mapping between Ensembl id and gene symbol is provided in tx2gene.csv.
+
+### Problem 1
+
+Please load the following R/Bioconductor packages by using "library(package)".
+
+In theory, you should not need to install anything since we requested all the packages to be pre-installed. But if you need to install something, you can simply run install.packages("<pkg_name>").
+
+Note: sva package with Combat function is used for batch effect removal;
+
+DESeq2 package is used for differential gene expression analysis;
+
+tximport package is used for importing transcript-level abundance into gene-level matrices for downstream analysis
+
+ggplot2 package is used for general plotting in R;
+
+pheatmap package is used for heatmap plotting;
+
+dplyr package is used for data frame manipulations in R;
+
+fgsea package is used for gene-set enrichment analysis.
+
+Also load ComplexHeatmap.
+
+```{r libraries, message = FALSE}
+# ```{r install, eval = FALSE}
+# if (!requireNamespace("BiocManager", quietly = TRUE))
+#     install.packages("BiocManager")
+# BiocManager::install("sva")
+# BiocManager::install("DESeq2")
+# BiocManager::install("tximport")
+# install.packages(c("ggplot2", "dplyr",
+#                    "fgsea","pheatmap"))
+#  BiocManager::install("ComplexHeatmap")
+
+library(ggplot2)
+library(sva)
+library(DESeq2)
+library(tximport)
+library(dplyr)
+library(fgsea)
+library(pheatmap)
+library(ComplexHeatmap)
+library(apeglm)
+```
+
+### Problem 2
+
+For RNA-seq analysis, visualization using principle component analysis (PCA) or hierarchical clustering is an essential step of exploratory analysis to identify potental batch effect. Please import transcript-level TPM values from Salmon output and convert to gene-level TPM values. Perform PCA of the samples using log2 transformed TPM values. Indicate different tissues (tumor or normal, using shape to show) and batch (1 or 2, using color to show) of each sample. Next try to use hierarchical clustering for these samples. Do the results suggest the presence of a batch effect?
+
+For this question, you will load Salmon output at /shared/courseSharedFolders/133853/HW2/raw_data1/Salmon_results. You also need to read in batch information provided in /shared/courseSharedFolders/133853/HW2/raw_data1/batch.csv. Remember to convert Ensembl ID to gene symbol, using the mapping provided in /shared/courseSharedFolders/133853/HW2/raw_data1/tx2gene.csv.
+
+```{r}
+# read files 
+batch_path <- "batch.csv"
+batch <- read.csv(batch_path)
+batch <- batch |> arrange(X)
+tx2gene_path <- "tx2gene.csv"
+tx2gene <- read.csv(tx2gene_path)
+salmon_path <- "C:/Users/caitl/OneDrive/Documents/BST282/HW2/Salmon_results"
+salmon_files <- list.files(salmon_path, pattern = "\\.sf$", full.names = TRUE)
+
+txi <- tximport(salmon_files, type = "salmon", tx2gene = tx2gene) 
+
+# log scale the TPM
+txi$log2TPM <- log2(txi$abundance + 1)
+
+# perform PCA
+pca <- prcomp(t(txi$log2TPM))
+df <- data.frame(pca$x[,1:2], batch = batch$batch, tissue = batch$tissue)
+df |> ggplot(aes(PC1, PC2, shape = factor(tissue), color = factor(batch))) +
+  geom_point(size = 3) +
+  labs(title = "PCA of RNA-seq data",
+       x = "PC1", y = "PC2",
+       shape = "Tissue", color = "Batch")
+
+df$labels = paste0(rownames(df), "(",df$batch,")")
+# hierarchial clustering 
+dist_matrix <- dist(t(txi$log2TPM))
+hc <- hclust(dist_matrix)
+plot(hc, labels=df$labels, main="Hierarchical Clustering Dendrogram", xlab="Sample (Batch)", ylab="Distance")
+
+```
+
+The results do suggest a batch effect. Looking at the PCA plot of PC2 vs PC1, the batches are clustered together. If there were no batch effect, we would expect the blue and red points to be found interspersed with one another. However, we instead see that the red points representing batch 1 and the blue points representing batch 2 cluster together. Moreover, when we look at the hierarchical clustering dendrogram, we see that the left branches comprise of batch 2 whereas the right branches comprise of batch 1, further suggesting a batch effect where samples from the same batch tend to cluster together.
+
+### Problem 3
+
+Run COMBAT on the samples to remove the batch effect. Visualize the results using a similar PCA and hierarchical clustering as Problem 2. Provide evidence that the batch effects are successfully adjusted.
+
+```{r}
+combat_result <- ComBat(dat = as.matrix(txi$log2TPM), batch = batch$batch, par.prior = TRUE, prior.plots = FALSE)
+
+# PCA after batch effect removal
+pca_combat <- prcomp(t(combat_result))
+df_combat <- data.frame(pca_combat$x[,1:2], batch = batch$batch, tissue = batch$tissue)
+
+# Plot PCA
+ggplot(df_combat, aes(PC1, PC2, shape = factor(tissue), color = factor(batch))) +
+  geom_point(size = 3) +
+  labs(title = "PCA after Batch Effect Removal",
+       x = "PC1", y = "PC2",
+       shape = "Tissue", color = "Batch")
+
+# Hierarchical clustering after batch effect removal
+dist_matrix_combat <- dist(t(combat_result))
+hc_combat <- hclust(dist_matrix_combat)
+plot(hc_combat, labels = df$labels, main = "Hierarchical Clustering Dendrogram after Batch Effect Removal", xlab = "Sample Batch", ylab = "Distance")
+```
+
+After running COMBAT on the samples to remove batch effect, we now have evidence that batch effect has been removed. When we now look at the PCA plot of PC2 vs PC1, the red and blue point colors are more interspersed with one another than they were before, rather than clustering together. Moreover, when we look at the hierarchical clustering dendrogram, we see a mix of batch 1 and 2 within branches.
+
+### Problem 4
+
+Run DESeq2 based on paired samples adjusting for the batch effect to identify differentially-expressed genes between tumor and normal tissues. How many genes are expressed higher in tumors than normal. Let's use 1) FDR \< 0.01 and 2) Log2 fold change threshold of 1 as the cutoff.
+
+Note: please use the raw_count columns of the Salmon result and convert these to integer values for DESeq2.
+
+Identify the top 5 most (by Log2FC) over expressed genes (FDR \< 0.01) in tumor and normal, respectively.
+
+```{r}
+# convert raw counts to integer
+int_counts <- round(txi$counts)
+# Create DESeq2 object
+dds <- DESeqDataSetFromMatrix(countData = int_counts,
+                              colData = batch,
+                              design = ~ tissue + batch)
+
+
+featureData <- data.frame(gene=rownames(int_counts))
+mcols(dds) <- DataFrame(mcols(dds), featureData)
+
+dds <- DESeq(dds)
+res <- results(dds, contrast = c("tissue", "Tumor", "Normal"))
+
+de_genes <- subset(res, padj < 0.01 & abs(log2FoldChange) > 1)
+
+# genes expressed higher in tumors
+tumor_higher <- subset(de_genes, log2FoldChange > 0)
+normal_higher <- subset(de_genes, log2FoldChange < 0)
+paste("Number of genes expressed higher in tumors than normal:", nrow(tumor_higher))
+
+# top 5 most (by Log2FC) over expressed genes (FDR < 0.01) in tumor and normal
+top_5_tumor <- head(tumor_higher[order(-tumor_higher$log2FoldChange),], 5)
+top_5_normal <- head(normal_higher[order(normal_higher$log2FoldChange),], 5)
+
+print("Top 5 most over-expressed genes in tumor tissue:")
+print(top_5_tumor)
+
+print("Top 5 most over-expressed genes in normal tissue:")
+print(top_5_normal)
+
+```
+
+There are 2037 differentially expressed genes and 847 genes are expressed higher in tumors. The top 5 genes over-expressed in tumor tissue are CASP14, TRPA1, HOXB13, CLEC3A, and SLC308A. The top 5 genes over-expressed in normal tissue are FABP7, UGT2B28, SOX10, SMYD1, and KRT14.
+
+### Problem 5
+
+Visualize the differential gene expression values by making a volcano and an MA plot to summarize the differences between tumor and normal. In the volcano plot, draw the statistically significant (FDR \< 0.01, Log2FC \> 1) tumor up-genes red and down-genes blue.
+
+Note: Be sure to use the lfcShrink function to get more robust estimates of the fold-changes for genes.
+
+```{r}
+# MA plot
+resLFC <- lfcShrink(dds, coef="tissue_Tumor_vs_Normal", type="apeglm", lfcThreshold=1) 
+plotMA(resLFC, ylim=c(-3,3), cex=.8)
+abline(h=c(-1,1), col="blue", lwd=2)
+
+
+df_res <- data.frame(gene = rownames(res), padj = res$padj, log2FoldChange = res$log2FoldChange)
+df_res$colors <- rep("NotSignificant", times = nrow(df_res))
+df_res$colors[which(df_res$padj < 0.01 & df_res$log2FoldChange > 1)] = "TumorUp"
+df_res$colors[which(df_res$padj < 0.01 & df_res$log2FoldChange < -1)] = "TumorDown"
+
+# Volcano plot
+df_res |> ggplot(aes(x = log2FoldChange, y = -log10(padj), color = colors)) +
+  geom_point(alpha = 0.5) +
+  scale_color_manual(values = c("TumorUp" = "red", "TumorDown" = "blue", "NotSignificant" = "black")) +
+  geom_hline(yintercept = -log10(0.01), linetype = "dashed", color = "grey") +
+  geom_vline(xintercept = c(-1, 1), linetype = "dashed", color = "grey") +
+  labs(x = "LFC", y = "-log10(FDR)", title = "Volcano Plot of Differential Gene Expression")
+```
+
+### Problem 6
+
+Try kmeans (try k = 4 or 7) clustering to group differentially expressed genes into different clusters. How many genes are there in each cluster? Draw a heatmap showing gene clusters.
+
+```{r}
+set.seed(123)
+select <- match(rownames(de_genes), rownames(combat_result)) 
+de_combat <- combat_result[select,]
+k4 <- kmeans(de_combat, centers = 4)
+clusters <- k4$cluster
+
+# Count the number of genes in each cluster
+print(table(clusters))
+
+colnames(de_combat) = seq(1:20) 
+labels = data.frame(batch = as.factor(df$batch))
+rownames(labels) = colnames(de_combat)
+de_combat = scale(de_combat)
+de_combat = na.omit(de_combat)
+set.seed(103)
+pheatmap(de_combat, 
+         scale = "row", 
+         color = colorRampPalette(c("blue", "white", "red"))(100), 
+         cluster_rows=TRUE, 
+         show_rownames=FALSE,
+         show_colnames = FALSE, 
+         cluster_cols=TRUE, 
+         annotation_col = labels) 
+
+```
+
+There are 354, 536, 447, and 700 genes in the four clusters.
+
+### Problem 7
+
+If you run DESeq2 without removing batch effect, how many differential genes do you get? How do their K-means clustering look? Does batch effect removal gives more interpretable results?
+
+```{r}
+dds2 <- DESeqDataSetFromMatrix(countData = int_counts,
+                              colData = batch,
+                              design = ~ tissue)
+
+mcols(dds2) <- DataFrame(mcols(dds2), featureData)
+
+dds2 <- DESeq(dds2)
+res2 <- results(dds2, contrast = c("tissue", "Tumor", "Normal"))
+
+
+de_genes2 <- subset(res2, padj < 0.01 & abs(log2FoldChange) > 1)
+paste("Number of differentially expressed genes:", nrow(de_genes2))
+
+select <- match(rownames(de_genes2), rownames(txi$log2TPM)) 
+de_txi <- txi$log2TPM[select,]
+k4 <- kmeans(de_txi, centers = 4)
+clusters <- k4$cluster
+
+# Count the number of genes in each cluster
+print(table(clusters))
+
+# Create a heatmap showing gene clusters
+set.seed(103)
+
+de_txi <- scale(de_txi)
+de_txi <- na.omit(de_txi)
+pheatmap(de_txi, 
+         scale = "row",
+         color = colorRampPalette(c("blue", "white", "red"))(100), 
+         cluster_rows=TRUE, 
+         show_rownames=FALSE,
+         show_colnames = FALSE, 
+         cluster_cols=TRUE, 
+         annotation_col = labels) 
+ 
+```
+
+There are 1347 differentially expressed genes when we do not remove batch effect. There are 351, 230, 307, and 459 genes in the four clusters. Looking at the heatmap, we can see clear batch effects in the gene expression data given that the columns are clustered by their sample batches. We not only see differences between normal vs tumor samples, but also between the two batches, resulting in four distinctly clustered columns. In the previous heatmap when batch effect was removed, the columns were only clustered based on normal vs tumor samples and the batches were evenly sorted throughout. For that reason, batch effect removal gives clearer and more interpretable results, as shown in the previous problem.
+
+### Problem 8
+
+From the batch-removed DESeq2 run results, extract the top 200 tumor-upregulated genes (by Log2FC, FDR \< 0.01). Run DAVID GO analysis (<https://david.ncifcrf.gov/>) to see whether these genes are enriched in specific biological process (BP), pathways, etc.
+
+```{r, fig.width=10}
+top_genes <- tumor_higher[order(tumor_higher$log2FoldChange, decreasing = TRUE), ]
+top_genes <- top_genes[1:200, ]
+
+gene_symbols <- rownames(top_genes)
+write.table(gene_symbols, file = "gene_symbols.txt", quote = FALSE, row.names = FALSE, col.names = FALSE)
+```
+
+```{r include_graphics, echo=FALSE}
+
+knitr::include_graphics("BP_terms.png") 
+
+knitr::include_graphics("KEGG_pathways.png") 
+```
+
+### Problem 9
+
+Using the summary statistics from problem 4, show the top five gene sets or pathways that best capture the differentially expressed genes between tumor than normal. Comment on the biological relevance of the results. Plot GSEA enrichment plot for an interesting pathway.
+
+Mapping between gene sets and pathways is provided in /shared/courseSharedFolders/133853/HW2/raw_data2/c2.cp.kegg.v7.1.symbols.gmt file.
+
+```{r, fig.width=10}
+# Load gene sets data
+gene_sets <- gmtPathways("c2.cp.kegg.v7.1.symbols.gmt")
+
+df_de_genes <- df_res |> filter(colors != "NotSignificant")
+rankings <- df_de_genes |> dplyr::select(gene, log2FoldChange) |> 
+  arrange(log2FoldChange, desc = TRUE)
+lfc <- rankings$log2FoldChange
+names(lfc) <- rankings$gene
+
+# Run GSEA
+gsea_results <- fgsea(pathways = gene_sets, 
+                      stats = lfc)
+
+# Sort the results by padj
+gsea_results <- gsea_results[order(gsea_results$padj, decreasing = FALSE),]
+
+# Print the top five gene sets or pathways
+top_5_pathways <- gsea_results[1:5, ]
+print("Top 5 pathways capturing differential expression:")
+print(top_5_pathways$pathway)
+
+# Plot GSEA enrichment plot for an interesting pathway
+interesting_pathway <- top_5_pathways$pathway[1]
+plotEnrichment(gene_sets[[interesting_pathway]],lfc) + 
+  labs(title = paste("Enrichment Plot:", interesting_pathway))
+```
+
+Each off the top 5 relevant pathways show biological relevance towards distinguishing between cancer tissue and normal tissue. KEGG_CELL_CYCLE is an important pathway for breast cancer because it involves dysregulation of cell cycle control mechanisms which leads to uncontrolled cell proliferation and tumors. KEGG_OOCYTE_MEIOSIS is an important pathway because breast cancer causing mutations such as BRCA-1 have effects on other parts of the body including the ovaries. KEGG_PROGESTERONE\_ MEDIATED_OOCYTE_MATURATION is an important pathway because breast cancer development is impacted by progesterone hormone receptors. KEGG_METABOLISM_OF_XENOBIOTICS_BY\_ CYTOCHROME_P450 is important because variations in xenobiotic metabolism pathways may influence susceptibility to toxins that might be contributing to breast cancer risk. KEGG_RETINOL_METABOLISM is important because retinol metabolism is important in breast cancer cell growth and differentiation so disruptions to this pathway can lead to breast cancer disease progression.
+
+## Part II: Sample classification
+
+We provide you z-score normalized expression data of 50 breast tumor samples, 50 normal breast samples (your training and cross-validation data), and 20 samples without diagnosis (your testing data). We want to use the 100 samples with known diagnosis to train machine learning models in order to predict the 20 unknown samples.
+
+You will need the following libraries in R: ggplot2 and ggfortify for plotting, caret for machine learning, and pROC is for evaluating testing performance. The YouTube video on caret (<https://youtu.be/z8PRU46I3NY>) and the package documentation (<http://topepo.github.io/caret/index.html>) might be helpful.
+
+All data for Part II are provided at /shared/courseSharedFolders/133853/HW2/raw_data2.
+
+```{r, warning=FALSE, cache=FALSE, message=FALSE}
+library(ggplot2)
+library(ggfortify)
+library(pROC)
+library(caret)
+
+```
+
+### Problem II.1
+
+Run PCA for dimension reduction on the 100 samples with known labels, and draw these 100 samples in a 2D plot. Do cancer and normal separate from the first two PCs? Would this be sufficient to classify the unknown samples?
+
+z-score normalized data are provided in BRCA_zscore_data.txt. Phenotype data is in BRCA_phenotype.txt.
+
+```{r, warning=FALSE, cache=FALSE, message=FALSE}
+
+# read data 
+expression_data <- read.table("BRCA_zscore_data.txt", header = TRUE)
+phenotype_data <- read.table("BRCA_phenotype.txt", header = TRUE)
+
+# perform PCA
+pca <- prcomp(expression_data)
+df <- data.frame(pca$x[,1:2], phenotype = phenotype_data$phenotype)
+df |> ggplot(aes(PC1, PC2, color = phenotype)) +
+  geom_point(size = 3) +
+  labs(title = "PCA 100 Known Diagnosis Samples",
+       x = "PC1", y = "PC2",
+       color = "Phenotype")
+```
+
+Cancer (Tumor) and Normal do not separate from the first 2 PCs, as shown in the plot above of PC2 vs PC1 where we fail to see any clear enough clustering separating the red dots (Normal) from the blue dots (Tumor). Therefore, the first 2 PCs are not enough to classify the unknown samples as either Cancer (Tumor) or Normal.
+
+### Problem II.2
+
+Draw a plot showing the cumulative % variance captured from the top 100 PCs. How many PCs are needed to capture 90% of the variance?
+
+```{r, warning=FALSE, cache=FALSE, message=FALSE}
+pca.var.per = round(pca$sdev^2/sum(pca$sdev^2)*100,1)
+cum.pca.var.per = cumsum(pca.var.per)
+num_pcs_90 <- which(cum.pca.var.per >= 90)[1]
+
+# Plot cumulative percentage variance
+plot(1:100, cumsum(pca.var.per[1:100]), type = "l", 
+     xlab = "Number of PCs", ylab = "Cumulative % Variance",
+     main = "Cumulative Percentage Variance Captured by Top 100 PCs")
+abline(v = num_pcs_90, col = "red")
+text(num_pcs_90, 50, paste("PCs:", num_pcs_90), pos = 4, col = "red")
+
+```
+
+25 PCs are needed to capture 90% of the variance.
+
+### Problem II.3
+
+Apply machine learning methods (KNN, logistic regression, Ridge regression, LASSO, ElasticNet, random forest, and support vector machines) on the top 25 PCs of the training data and 5-fold cross validation to classify the samples. caret and MASS already implemented all of the machine learning methods, including cross-validation, so calling each is only one command. In order to get consistent results from different runs, use random_state when running PCA.
+
+You may need to install and load the kernlab package before running.
+
+```{r, warning=FALSE, cache=FALSE, message=FALSE}
+library(kernlab)
+set.seed(123)
+lambda <- 10^seq(-3, 3, length = 100)
+
+# top 25 PCs
+train_data <- pca$x[,1:25]
+train_labels <- factor(phenotype_data$phenotype)
+
+# Define control parameters for 5-fold cross-validation
+ctrl <- trainControl(method="cv", number=5, savePredictions = TRUE,classProbs =  TRUE)
+metric <- "Accuracy"
+
+# Apply machine learning methods with 5-fold cross-validation
+
+# KNN
+knn_model <- train(train_data, train_labels, method = "knn", trControl = ctrl, metric = metric)
+
+# logistic regression
+logistic_model <- train(train_data, train_labels, method = "glm", family = "binomial", trControl = ctrl, metric = metric)
+
+# Ridge regression
+ridge_model <- train(train_data, train_labels, method = "glmnet", trControl = ctrl, tuneGrid = expand.grid(alpha = 0, lambda = lambda), metric = metric)
+
+# LASSO
+lasso_model <- train(train_data, train_labels, method = "glmnet", trControl = ctrl, tuneGrid = expand.grid(alpha = 1, lambda = lambda), metric = metric)
+
+# ElasticNet
+elasticnet_model <- train(train_data, train_labels, method = "glmnet", trControl = ctrl, tuneGrid = expand.grid(alpha = seq(0, 1, by = 0.1), lambda = lambda), metric = metric)
+
+# Random forest
+rf_model <- train(train_data, train_labels, method = "rf", trControl = ctrl, metric = metric)
+
+# support vector machines
+svm_model <- train(train_data, train_labels, method = "svmRadial", trControl = ctrl, metric = metric)
+```
+
+### Problem II.4
+
+Summarize the performance of each machine learning method, in terms of accuracy and kappa.
+
+```{r}
+# Summarize the performance
+results <- resamples(list(KNN = knn_model, Logistic = logistic_model, Ridge = ridge_model, LASSO = lasso_model, ElasticNet = elasticnet_model, Random_Forest = rf_model, SVM = svm_model))
+
+print(results$values)
+```
+
+### Problem II.5
+
+Compare the performance difference between logistic regression, Ridge, LASSO, and ElasticNet. In LASSO, how many PCs have non-zero coefficient? In ElasticNet, what is the lamda for Ridge and LASSO, respectively?
+
+```{r}
+# Number of PCs with non-zero coefficient in LASSO
+lasso_model_coef <- coef(lasso_model$finalModel, lasso_model$bestTune$lambda)
+coef_mat <- as.matrix(lasso_model_coef)[-1, , drop = FALSE]
+non_zero_pcs <- length(which(coef_mat != 0))
+print(paste("Number of PCs with non-zero coefficient in LASSO:", non_zero_pcs))
+
+# Lambda for Ridge and LASSO in ElasticNet
+elasticnet_lambda <- elasticnet_model$bestTune$lambda
+ridge_lambda <- ridge_model$bestTune$lambda
+lasso_lambda <- lasso_model$bestTune$lambda
+
+paste("Best Lambda for ElasticNet:", elasticnet_lambda)
+paste("Best Lambda for Ridge:", ridge_lambda)
+paste("Best Lambda for LASSO:", lasso_lambda)
+```
+
+ElasticNet has the highest mean accuracy and kappa, followed by Ridge and LASSO and then Logistic Regression.
+
+In LASSO, there are 4 PCs with non-zero coefficients.
+
+In ElasticNet, the lambda is 0.003, in Ridge, the lambda is 0.057, and in LASSO, the lambda is 0.087.
+
+### Problem II.6
+
+Use the PCA projections in Q1 to obtain the first 25 PCs of the 20 unknown samples. Use one method that performs well in Q4 to make predictions. Caret already used the hyper-parameters learned from cross-validation to train the parameters of each method on the full 100 training data. You just need to call this method to make the predictions.
+
+Expression data for the 20 unknown samples are provided in unknown_samples.txt.
+
+```{r, warning=FALSE, cache=FALSE, message=FALSE}
+unknown_data <- read.table("unknown_samples.txt", header = TRUE)
+
+# perform PCA
+unknown_pca <- predict(pca, newdata = unknown_data)
+unknown_25pcs <- unknown_pca[, 1:25]
+
+predictions <- predict(elasticnet_model, unknown_25pcs)
+predictions
+```
+
+### Problem II.7
+
+Can you find out the top 3 genes that are most important in this prediction method in Q6? Do they have some known cancer relevance?
+
+```{r, warning=FALSE, cache=FALSE, message=FALSE}
+en_model_coef <- coef(elasticnet_model$finalModel, elasticnet_model$bestTune$lambda)
+pc_importance <- as.matrix(en_model_coef)[-1, , drop = FALSE]
+pca_loadings <- as.matrix(pca$rotation[,1:25])
+gene_importance <- pca_loadings %*% pc_importance
+
+top_gene_indices <- order(abs(gene_importance), decreasing = TRUE)[1:3]
+top_genes <- rownames(gene_importance)[top_gene_indices]
+
+print("Top 3 Genes for ElasticNet:") 
+print(top_genes)
+```
+
+------------------------------------------------------------------------
+
+The top 3 genes that are most important in the ElasticNet prediction method are MUC1, C4A, and MGP, which are all related to cancer. MUC1 is a glycoprotein that is normally found in glandular epithelium such as breast tissue. It is involved in multiple cellular processes relevant to cancer progression, including cell adhesion, signaling, migration, and immune evasion, so its overexpression can contribute to tumor growth, invasion, and metastasis in breast cancer. C4A is a protein involved in the complement system, which is a part of the immune system implicated in various disease processes, including cancer. Alterations in C4A expression levels can influence the immune response to tumor cells, potentially affecting tumor growth and progression. MGP is a gene that has been found to promote tumor progression by regulating angiogenesis. Therefore, it makes sense that these genes are important in the prediction of tumor vs normal tissue cells given their relavence to breast cancer.
+
+### Problem II.8
+
+Suppose a pathologist later made diagnosis on the 20 unknown samples (load the diagnosis.txt file). Based on this gold standard, draw an ROC curve of your predictions in Q6. What is the prediction AUC?
+
+```{r, warning=FALSE, cache=FALSE, message=FALSE}
+
+true_labels <- read.table("diagnosis.txt", header = TRUE)
+
+predicted_labels <- if_else(as.character(predictions) == "Tumor", 1, 0)
+true_labels <- ifelse(true_labels$phenotype == "Tumor", 1, 0)
+
+# Compute ROC and AUC
+roc_curve <- roc(true_labels, predicted_labels)
+auc <- auc(roc_curve)
+
+# Plot ROC curve
+roc_df <- data.frame(
+  Sensitivity = roc_curve$sensitivities,
+  Specificity = roc_curve$specificities
+)
+
+ggplot(roc_df, aes(x = 1 - Specificity, y = Sensitivity)) +
+  geom_line(color = "blue") +
+  geom_abline(intercept = 0, slope = 1, linetype = "dotted", color = "red") +
+  labs(title = "ROC Curve", x = "1-Specificity", y = "Sensitivity", 
+       subtitle = paste("AUC:", round(auc,3))) +
+  theme_minimal()
+```
+
+The prediction AUC is 0.899.

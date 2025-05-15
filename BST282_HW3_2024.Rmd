@@ -1,0 +1,817 @@
+---
+title: 'BST282 HW3'
+author: 'Caitlin Cheung'
+date: "3/9/2024"
+output: html_document
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+# **Background**
+
+**Androgen receptor (AR) is a transcription factor frequently
+over-activated in prostate cancer. To study AR regulation in prostate
+cancer, scientists conducted AR ChIP-seq in prostate tumors and normal
+prostate tissues. Since the difference between individual patients could
+be quite big, this study actually included many more tumor and normal
+samples. However, for the purpose of this HW, we will only use the
+ChIP-seq data from 1 prostate tumor samples (tumor) and 1 normal
+prostate tissues (normal).**
+
+**Hint:** It helps to read the MACS README and Nature Protocol paper:
+
+[https://pypi.org/project/MACS2/](https://pypi.org/project/MACS2/https://www.nature.com/articles/nprot.2012.101){.uri}
+
+[https://www.nature.com/articles/nprot.2012.101](https://pypi.org/project/MACS2/https://www.nature.com/articles/nprot.2012.101){.uri}
+
+# **Environment Setup**
+
+Before starting this homework, follow the instructions in:
+`/shared/courseSharedFolders/133853/HW3/env_setup.sh`
+
+to create a **mamba environment** with the proper package versions
+installed.
+
+# **Assignment**
+
+Aside from embedding screenshots, all code blocks in this file are set
+with `eval=FALSE`. This file is only meant to be a pasted collection of
+code you have already run. To run your code, submit it in a separate
+file as a job on HPC. *Throughout this HW, all the coordinates are given
+in **hg38** version of the human genome assembly.*
+
+## **Part I. ChIP-seq peak calling**
+
+### **Question 1**
+
+**Usually, we use BWA to map reads from a ChIP-seq experiment to the
+genome. As in RNA-seq, this process takes a `.fastq` file as input and
+produces a `.bam` file.**
+
+**Here is one example ChIP-seq single-end sequenced `.fastq` file with
+only 1M reads:**
+`/shared/courseSharedFolders/133853/HW3/data/tumor_1M.fastq`
+
+**Use the BWA-MEM algorithm to align these 1M query reads to Hg38 of the
+human genome assembly. You will need to submit a bash script to the HPC
+cluster to do so. Copy and paste your bash script below, and include a
+screenshot of the output to demonstrate your alignment.**
+
+**You can find a BWA hg38 reference file here:**
+`/shared/courseSharedFolders/133853/HW3/reference/Homo_sapiens.GRCh38.dna.primary_assembly.fa`
+
+```{r, engine='bash', eval=FALSE}
+# Define paths
+fastq="/shared/courseSharedFolders/133853/HW3/data/tumor_1M.fastq"
+reference="/shared/courseSharedFolders/133853/HW3/reference/Homo_sapiens.GRCh38.dna.primary_assembly.fa"
+output="/shared/home/cac8967/HW3/part1/tumor_1M_aligned.bam"
+
+# Alignment using BWA-MEM
+bwa mem -t 4 $reference $fastq | samtools view -Sb - > $output
+
+```
+
+```{r include_graphics, echo=FALSE}
+
+knitr::include_graphics("q1.png") 
+```
+
+**In this test sample, what proportion of the reads is successfully
+mapped (to at least one location) and what proportion is uniquely mapped
+(to a single location) in the human genome?**
+
+```{r, engine="bash", eval=FALSE}
+# Count total mapped reads
+total_mapped_reads=$(samtools view -F 4 -c $output)
+
+# Count uniquely mapped reads
+uniquely_mapped_reads=$(samtools view -q 1 -F 4 -c $output)
+
+# Calculate proportions
+#total_reads=1000000
+total_reads=$(samtools view -c $output)
+proportion_mapped=$(bc <<< "scale=4; $total_mapped_reads / $total_reads")
+proportion_uniquely_mapped=$(bc <<< "scale=4; $uniquely_mapped_reads / $total_reads")
+
+echo "Proportion of reads successfully mapped: $proportion_mapped"
+echo "Proportion of reads uniquely mapped: $proportion_uniquely_mapped"
+
+```
+
+96.2% of reads are successfully mapped to at least 1 location and 85.5%
+of reads are uniquely mapped to a single location in the human genome.
+
+### Question 2
+
+**When sequencing library preparation involves a PCR amplification step,
+it is common to observe multiple reads where identical nucleotide
+sequences are disproportionately represented. This is especially a
+problem in tissue ChIP-seq experiments (as compared to cell lines) when
+input cell numbers are low.**
+
+**Duplicated read % is often a good way to quality control (QC) your
+ChIP-seq sample, as high duplicated reads indicate PCR over
+amplification of the ChIP DNA. Removing these duplicated reads can
+improve the peak calling accuracy. Thus, it may be necessary to perform
+a duplicate read removal step, which flags identical reads and
+subsequently removes them from the dataset.**
+
+**DO NOT continue with the `.bam` file you produced in `Question 1.`
+That `.bam` file only contains one million reads. To save you time, we
+have run the BWA alignment on the full set of reads. You can find the
+resultant `.bam` files at:**
+`/shared/courseSharedFolders/133853/HW3/data/tumor_sorted.bam`
+`/shared/courseSharedFolders/133853/HW3/data/normal_sorted.bam`
+
+**Run `macs2 filterdup` on both samples above. As before, submit your
+bash code as job to HPC. Copy and paste your bash script below, and
+include a screenshot of the output.**
+
+```{r, engine='bash', eval=FALSE}
+
+# Define paths
+tumor="/shared/courseSharedFolders/133853/HW3/data/tumor_sorted.bam"
+normal="/shared/courseSharedFolders/133853/HW3/data/normal_sorted.bam"
+output="/shared/home/cac8967/HW3/part1"
+
+# Run macs2 filterdup on tumor sample
+macs2 filterdup -i $tumor -f BAM --keep-dup=1 -o $output/tumor_filtered.bam
+
+# Run macs2 filterdup on normal sample
+macs2 filterdup -i $normal -f BAM --keep-dup=1 -o $output/normal_filtered.bam
+```
+
+tumor_filtered.bam output:
+
+```{r, echo=FALSE}
+knitr::include_graphics("q2a.png")
+```
+
+normal_filtered.bam output:
+
+```{r, echo=FALSE}
+knitr::include_graphics("q2b.png")
+```
+
+**What % of reads are redundant?**
+
+17% of reads are redundant in the tumor sample and 12% of reads are
+redundant in the normal sample.
+
+### Question 3
+
+**Many ChIP-seq experiments generate control data by running ChiP
+without enriching for the factor of interest. However, in this
+experiment, we only have AR-enriched ChIP (of both tumor and normal) and
+no control samples. Without control, MACS2 will use the non-peak read
+signals around the peaks to infer the chromatin background and estimate
+the ChIP enrichment over background.**
+
+**In ChIP-seq, + strand reads and -- strand reads are distributed to the
+left and right of the binding site, respectively, and the distance
+between the + strand reads and -- strand reads can be used to estimate
+the fragment length from sonication (note: with PE seq, insert size
+could be directly estimated).**
+
+**Use MACS2 to call peaks from `tumor_sorted.bam` and
+`normal_sorted.bam` separately. As before, submit your bash code as job
+to HPC. Copy and paste your bash script below, and include a screenshot
+of the output.**
+
+```{r, engine='bash', eval=FALSE}
+
+# Define paths
+tumor="/shared/courseSharedFolders/133853/HW3/data/tumor_sorted.bam"
+normal="/shared/courseSharedFolders/133853/HW3/data/normal_sorted.bam"
+output="/shared/home/cac8967/HW3/part1"
+
+# Run MACS2 to call peaks on tumor sample
+macs2 callpeak -t "$tumor" -f BAM -n tumor_peaks --outdir "$output/tumor_macs2_output"
+
+# Run MACS2 to call peaks on normal sample
+macs2 callpeak -t "$normal" -f BAM -n normal_peaks --outdir "$output/normal_macs2_output"
+```
+
+tumor_macs2_output (folder and .narrowPeak file)
+
+```{r, echo=FALSE}
+knitr::include_graphics("q3a.png")
+knitr::include_graphics("q3b.png")
+```
+
+normal_macs2_output output (folder and .narrowPeak file)
+
+```{r, echo=FALSE}
+knitr::include_graphics("q3c.png")
+knitr::include_graphics("q3d.png")
+```
+
+**How many peaks do you get from each condition with FDR \< 0.05 and
+fold change \> 5? What is the estimated fragment size in each?**
+
+```{r, eval=FALSE}
+
+tumor_peaks <- "C:/Users/caitl/OneDrive/Documents/BST282/HW3/tumor_peaks_peaks.narrowPeak"
+normal_peaks <- "C:/Users/caitl/OneDrive/Documents/BST282/HW3/normal_peaks_peaks.narrowPeak"
+
+tumor_peaks_df <- read.table(tumor_peaks, header = FALSE, stringsAsFactors = FALSE)
+normal_peaks_df <- read.table(normal_peaks, header = FALSE, stringsAsFactors = FALSE)
+
+
+# Filter peaks based on FDR < 0.05 and fold change > 5
+tumor_peaks_filtered <- tumor_peaks_df |> mutate(V11 = 10^(-V9)) |> filter(V11 < 0.05 & V7 > 5)
+normal_peaks_filtered <- normal_peaks_df |> mutate(V11 = 10^(-V9)) |> filter(V11 < 0.05 & V7 > 5)
+
+# Count the number of filtered peaks
+num_tumor_peaks <- nrow(tumor_peaks_filtered)
+num_normal_peaks <- nrow(normal_peaks_filtered)
+
+# Print results
+paste("Number of peaks with FDR < 0.05 and fold change > 5 in tumor sample:", num_tumor_peaks)
+paste("Number of peaks with FDR < 0.05 and fold change > 5 in normal sample:", num_normal_peaks)
+
+```
+
+```{r, engine='bash', eval=FALSE}
+
+tumor_peaks="/shared/home/cac8967/HW3/part1/tumor_macs2_output/tumor_peaks_peaks.narrowPeak"
+normal_peaks="/shared/home/cac8967/HW3/part1/normal_macs2_output/normal_peaks_peaks.narrowPeak"
+
+FDR=$(echo "scale=3; -l(0.05) / l(10)" | bc -l)
+awk '$7 > 5 && $9 > "$FDR"' "$tumor_peaks" | wc -l
+awk '$7 > 5 && $9 > "$FDR"' "$normal_peaks" | wc -l
+```
+
+There are 27088 peaks in the tumor sample with FDR \< 0.05 and fold
+change \> 5 and the estimated fragment length is 159 bps. There are
+10600 peaks in the normal sample with FDR \< 0.05 and fold change \> 5
+and the estimated fragment length is 153 bps.
+
+### Question 4
+
+**Now we want to see whether AR has *differential* binding sites between
+prostate tumors and normal prostate tissue. Use MACS2 to call peaks in
+`tumor_sorted.bam` again, but this time use the `normal_sorted.bam` as a
+control. As before, submit your bash code as job to HPC. Copy and paste
+your bash script below, and include a screenshot of the output.**
+
+```{r, engine='bash', eval=FALSE}
+# Define paths
+tumor="/shared/courseSharedFolders/133853/HW3/data/tumor_sorted.bam"
+normal="/shared/courseSharedFolders/133853/HW3/data/normal_sorted.bam"
+output="/shared/home/cac8967/HW3/part1"
+
+# Run MACS2
+macs2 callpeak -t "$tumor" -c "$normal" -f BAM -n tumor_vs_normal_peaks --outdir "$output"
+
+```
+
+```{r, echo=FALSE}
+knitr::include_graphics("q4.png")
+```
+
+**How many peaks do you get with FDR \< 0.01 and fold change \> 6?**
+
+```{r, eval=FALSE}
+
+peaks <- "C:/Users/caitl/OneDrive/Documents/BST282/HW3/tumor_vs_normal_peaks_peaks.narrowPeak"
+
+peaks_df <- read.table(peaks, header = FALSE, stringsAsFactors = FALSE)
+
+
+# Filter peaks based on FDR < 0.05 and fold change > 5
+peaks_filtered <- peaks_df |> mutate(V11 = 10^(-V9)) |> filter(V11 < 0.01 & V7 > 6)
+
+# Count the number of filtered peaks
+num_peaks <- nrow(peaks_filtered)
+
+# Print results
+paste("Number of peaks with FDR < 0.01 and fold change > 6:", num_peaks)
+```
+
+```{r, engine='bash', eval=FALSE}
+peaks="/shared/home/cac8967/HW3/part1/tumor_vs_normal_peaks_peaks.narrowPeak"
+
+FDR=$(echo "scale=3; -l(0.01) / l(10)" | bc -l)
+
+awk '$7 > 6 && $9 > "$FDR"' "$peaks" | wc -l
+```
+
+There are 9696 peaks with FDR \< 0.01 and fold change \> 6.
+
+## Part II. ChIP-seq quality control
+
+### Question 5
+
+**Cistrome Data Browser <http://cistrome.org/db/> has collected and
+processed a large compendium of published ChIP-seq data. Play with
+Cistrome DB. Biological sources indicate whether the ChIP-seq is
+generated from a cell line (e.g. VCaP, LNCaP, PC3, C4-2) or a tissue
+(Prostate). Are there over 100 AR ChIP-seq samples which passed all QC
+measures in human prostate tissues?**
+
+Hint: Check out Options next to the Search function.
+
+```{r, out.width = '100%', echo=FALSE}
+
+knitr::include_graphics("q5.png") 
+```
+
+Yes, there are over 100 AR ChIP-seq samples which passed all QC measures
+in human prostate tissues. There are 162 samples.
+
+### Question 6
+
+**Doing transcription factor ChIP-seq in tissues could be a tricky
+experiment, so sometimes even published data in high profile journals
+have bad quality. Look at a few AR ChIP-seq samples in the prostate
+tissue on Cistrome and inspect their QC reports. Can you comment on what
+QC measures tell you whether a ChIP-seq is of good or bad quality?
+Include a screen shot of a good AR ChIP-seq vs a bad AR ChIP-seq.**
+
+Good QC:
+
+```{r, echo=FALSE}
+knitr::include_graphics("goodQC.png") 
+```
+
+Bad QC:
+
+```{r, echo=FALSE}
+knitr::include_graphics("badQC.png") 
+```
+
+A good-quality ChIP-seq has a large percent of uniquely mapped reads,
+large numbers of merged Total/Fold 10/Fold 20 peaks, a larger fraction
+of reads in peaks (FRiP), and a large % of Top 5k peaks overlapping with
+union DHS. Moreover, when examining the % Top 5k peaks Phastcon
+Conservation Profiles, a good-quality ChIP-seq has one large peak in
+Average Phastcons at a location of 0 bp from the center whereas a
+low-quality ChIP-seq has several peaks all along various bp distances
+from the center.
+
+## Part III ChIP-seq motif finding
+
+### Question 7
+
+**We would like to identify which other transcription factors (TF) might
+be collaborating with AR in prostate tumors. Try one of the following
+motif finding tools to find TF motifs enriched in the differential AR
+peaks you identified above (Q4).**
+
+HOMER: <http://homer.ucsd.edu/homer/motif/>\
+MEME: <http://meme-suite.org/tools/meme-chip>\
+Weeder: <http://159.149.160.88/pscan_chip_dev/>\
+Cistrome: <http://cistrome.org/ap/root> (Register for a free account).
+
+```{r, engine='bash', eval=FALSE}
+
+peak_bed_file="/shared/home/cac8967/HW3/part1/tumor_vs_normal_peaks_summits.bed"
+reference="/shared/courseSharedFolders/133853/HW3/reference/Homo_sapiens.GRCh38.dna.primary_assembly.fa"
+output="/shared/home/cac8967/HW3/part3"
+preparsedDir="/shared/home/cac8967/HW3/part3/HOMERpreparsed"
+
+findMotifsGenome.pl "$peak_bed_file" "$reference" "$output" -preparsedDir "$preparsedDir"
+
+```
+
+**Did you find the known AR motif, and motifs of other factors that
+might interact with AR in prostate cancer in gene regulation? Describe
+the tool you used, what you did, and what you found. Note that finding
+the correct AR motif is usually an important criterion for AR ChIP-seq
+QC as well.**
+
+```{r, echo=FALSE}
+knitr::include_graphics("q7b.png")
+```
+
+To find motifs, I used the HOMER function findMotifsGenome.pl (code
+shown above) with my tumor vs. normal peaks bed file as an input and the
+hg38 file as the reference genome. The output of the code was several
+.txt documents as well as an HTML file showing known and de novo motifs.
+In the above image, I screenshotted the top-15 known motifs that were
+found using HOMER.
+
+From this, I did find a known AR motif,
+ARE(NR)/LNCA)-AR-ChIP-Seq(GSE27824)/Homer, which is an ARE or Androgen
+Response Element. AREs are known motifs associated with ARs that are
+serve as binding sites for the AR transcription factor. Aside from the
+known AR motif (ARE), I found several other motifs of other factors that
+might interact with AR in prostate cancer in gene regulation. These
+mainly include motifs associated with forkhead box proteins (FOX) in
+addition to homeobox proteins (HOXB).
+
+### Question 8
+
+**Look at the AR binding distribution in Cistrome DB from a few good AR
+ChIP-seq datasets in prostate tissue. Does AR bind mostly in the gene
+promoters, exons, introns, or intergenic regions?**
+
+```{r, echo=FALSE}
+knitr::include_graphics("q8a.png")
+```
+
+AR binds mostly in the introns and intergenic regions.
+
+**Also, look at the QC motifs to see what motifs are enriched in the
+ChIP-seq peaks. Do you see similar motifs here as those you found in
+your motif analyses?**
+
+```{r, echo=FALSE}
+knitr::include_graphics("q8.png")
+```
+
+There are several similar motifs here as those found from the motif
+analyses including ARE and those that are associated with the forkhead
+(FOX) and homeobox (HOXB) proteins. Above is a screenshot of just the
+first few, but there are several more motifs here enriched in the
+ChIP-Seq peaks.
+
+## Part IV. Identify AR-interacting transcription factors
+
+### Question 9
+
+**Sometimes members of the same transcription factor family (e.g. E2F1,
+2, 3, 4, 5, etc) have similar binding motifs, significantly overlapping
+binding sites, but different expression patterns across tissues. So,
+let's check whether the TFs you identified in Q7 are highly expressed in
+prostate tumor tissue. For this, we will use GEPIA
+<http://gepia2.cancer-pku.cn/#general>**
+
+**First, query differential expression in prostate adenocarcinoma
+(PRAD):** <http://gepia2.cancer-pku.cn/#degenes>
+
+**Among the upregulated genes in PRAD, is there a member of the TF
+family that recognizes the non-AR motifs you found in Q7? This could be
+a potential AR collaborator.**
+
+```{r}
+my_df <- read.delim("knownResults.txt", header = TRUE, fill = TRUE)
+PRAD_df <- read.delim("table_degenes.txt", header = TRUE, fill = TRUE)
+
+my_genes <- gsub("\\(.*", "", my_df$Motif.Name)
+my_genes <- gsub("\\/.*", "", my_genes)
+PRAD_genes <- PRAD_df$Gene.Symbol
+
+genes_in_df <- PRAD_genes[PRAD_genes %in% my_genes]
+print(genes_in_df)
+```
+
+There is an overlap of 23 genes between the upregulated genes in PRAD
+and the TFs that recognize the motifs founds in Q7. From the list of
+overlapping genes shown above, we again see FOX and HOXB genes (FOXA1
+and HOXB13) which tells us these could be potential AR collaborators.
+
+**Next, query gene expression correlation:**
+<http://gepia2.cancer-pku.cn/#correlation> **between AR and this
+potential AR collaborator**
+
+```{r, echo=FALSE}
+knitr::include_graphics("q9_1.png")
+
+knitr::include_graphics("q9_2.png")
+```
+
+**Based on your results from Question 7 and Question 9, which
+transcription factors are likely collaborators of AR in prostate
+cancer?**
+
+Based on my results from Question 7 and Question 9, HOXB13 (associated
+with homeobox proteins) and FOXA1 (associated with forkhead proteins)
+are likely collaborators of AR in prostate cancer.
+
+Note: When we conduct RNA-seq on prostate tumors, each tumor might
+contain cancer cells, normal prostate epithelia cells, stromal
+fibroblasts, and other immune cells. Therefore, genes that are highly
+expressed in cancer cells (including AR) could be correlated in
+different tumors simply due to the tumor purity bias. Therefore, when
+looking for genes correlated with AR in prostate cancer cells, we should
+correct this tumor purity bias.
+
+### Question 10
+
+**Besides looking for motif enrichment, another way to find TFs that
+might interact with AR is to see whether there are other TF ChIP-seq
+data which have significant overlap with AR ChIP-seq. Take your
+differential AR ChIP-seq peaks for tumor vs. normal (the `.bed` output
+from Q4), and submit this to the last prompt on the Cistrome Toolkit:**
+<http://dbtoolkit.cistrome.org>
+
+**This tool looks through all the ChIP-seq data in CistromeDB to find
+ones with significant overlap with your peak list. You should see AR
+enriched in the results (since your input is a list of AR ChIP-seq peaks
+after all). What other factors did you see enriched? Do they agree with
+your motif analyses before?**
+
+Hint: Some tools that work with `.bed` files expect the chromosome
+column to be formatted as `chr1`, `chr2`, `chr3`, etc. rather than `1`,
+`2`, `3`, etc.
+
+```{r, eval=FALSE}
+
+narrowPeak_data <- read.table("tumor_vs_normal_peaks_summits.bed", header = FALSE)
+bed_data <- narrowPeak_data[, c(1, 2, 3)]
+bed_data$V1 <- paste0("chr", bed_data$V1)
+
+write.table(bed_data, "tumor_vs_normal.bed", sep = "\t", quote = FALSE, row.names = FALSE, col.names = FALSE)
+
+```
+
+```{r, echo=FALSE}
+knitr::include_graphics("q10.png")
+```
+
+From the CistromeDM toolkit output shown above, AR is the most enriched,
+which makes sense because the input was a list of AR ChIP-Seq peaks. In
+addition to this, HOXB13 and FOXA1 are also highly enriched, which
+agrees with my motif analyses from before (Q7 and Q9).
+
+## PART V. Find TF direct target genes and pathways
+
+### Question 11
+
+**Now we will try to identify the target genes for these AR binding
+sites. One simple approach is to collect the genes whose promoters lie
+within AR binding sites.**
+
+**Write code that takes two input files:** **`1)` the AR differential
+ChIP-seq peaks in prostate tumor compared to normal** **`2)` the human
+RefSeq annotation table**
+
+**1) should be the `.bed` file that you produced in Q4.** **You can find
+2) in `/shared/courseSharedFolders/133853/HW3/data/refGene.txt`**
+
+**Your code should output a file containing genes that have a
+differential AR ChIP-seq peak within 2KB +/- from their transcription
+start site (TSS).**
+
+Hint 1: `bedtools window` will be a useful function here. You can use
+python, R, or bash to prepare inputs for `bedtools window`.
+
+Hint 2: To interpret the column names of `refGene.txt`, check out
+<http://genome.ucsc.edu/cgi-bin/hgTables>. You can select **group:**"All
+Tables" and **table:**"refGene" to see documentation.
+
+Hint 3: Make sure your function takes the strand (+ vs -) into account
+when identifying the TSS.
+
+```{r, eval=FALSE}
+
+ar_peaks_file <- "tumor_vs_normal_peaks_summits.bed"
+refgene_file <- "refGene.txt"
+
+refgene <- read.table(refgene_file, header = FALSE, stringsAsFactors = FALSE)
+TSS <- refgene |> select(chr = V3, start = V5, end = V6,
+                         gene = V13, score = V12, strand = V4) 
+TSS <- TSS |> 
+  mutate(end = if_else(strand == "+", start+1, end)) |> 
+  mutate(start = if_else(strand == "-", end-1, start)) |> 
+  arrange(start) |> 
+  select(chr, start, end, gene, score, strand)
+TSS <- unique(TSS)
+
+write.table(TSS, file = "refGene.bed", sep = "\t", quote = FALSE, row.names = FALSE, col.names = FALSE)
+
+peaks <- read.table(ar_peaks_file, header = FALSE, stringsAsFactors = FALSE)
+peaks <- peaks |> select(V1, V2, V3, V4)
+peaks$V1 <- paste0("chr", peaks$V1)
+peaks <- peaks |> arrange(V2)
+
+write.table(peaks, file = "peaks.bed", sep = "\t", quote = FALSE, row.names = FALSE, col.names = FALSE)
+```
+
+```{r, engine='bash', eval=FALSE}
+
+ar_peaks_file="/shared/home/cac8967/HW3/part5/peaks.bed"
+refgene_file="/shared/home/cac8967/HW3/part5/refGene.bed"
+output_file="/shared/home/cac8967/HW3/part5/target_genes.bed"
+
+# Use bedtools window to find overlapping genes
+bedtools window -a "$refgene_file" -b "$ar_peaks_file" -w 2000 -u > "$output_file"
+```
+
+ar_peaks_file="/shared/home/cac8967/HW3/part5/
+
+**How many putative AR target genes in prostate cancer do you get using
+this approach?**
+
+```{r, eval=FALSE}
+gene_file <- "target_genes.bed"
+
+genes <- read.table(gene_file, header = FALSE, stringsAsFactors = FALSE)
+gene_list <- unique(genes$V4)
+
+paste("Number of unique putative AR target genes in prostate cancer: ", length(gene_list))
+```
+
+There are 744 unique putative AR target genes in prostate cancer.
+
+### Question 12
+
+**Among all the genes with nearby AR binding, only a subset might be
+differentially expressed in prostate cancer. And vice versa: among the
+differentially expressed genes in prostate cancer, only a subset might
+be directly regulated by AR binding.**
+
+**By comparing a large number of prostate tumors with normal prostates,
+we have compiled a list of upregulated genes in prostate cancer. The
+results are in:**
+`/shared/courseSharedFolders/133853/HW3/data/up_regulated_genes_in_prostate_cancer.txt`
+
+**Using python or R, find the overlap between these upregulated genes
+and the putative AR target genes you identified in Question 11.**
+**Then, run DAVID GO analysis (<https://david.ncifcrf.gov/>) on:** **1)
+genes with nearby AR binding (identified in Question 11)** **2) genes
+that are upregulated in prostate cancer *AND* have nearby AR binding**
+
+**Are there enriched GO terms or pathways? Include screenshots of your
+DAVID GO analysis.**
+
+```{r, eval=FALSE}
+
+write.table(gene_list, file = "ar_genes.txt", quote = FALSE, col.names = FALSE, row.names = FALSE)
+
+up_genes_file <- "up_regulated_genes_in_prostate_cancer.txt"
+up_genes <- read.table("up_regulated_genes_in_prostate_cancer.txt",header = TRUE)
+matches <- subset(up_genes, geneName %in% gene_list)
+matches <- matches$geneName
+
+write.table(matches, file = "gene_matches.txt", quote = FALSE, col.names = FALSE, row.names = FALSE)
+
+matches
+```
+
+**1) genes with nearby AR binding**
+
+```{r, echo=FALSE}
+knitr::include_graphics("q12d.png")
+knitr::include_graphics("q12e.png")
+```
+
+**2) genes that are upregulated in prostate cancer *AND* have nearby AR
+binding**
+
+```{r, echo=FALSE}
+knitr::include_graphics("q12.png")
+```
+
+Yes, there are enriched GO-terms in the genes that are upregulated in
+prostate cancer AND have nearby AR binding. The BP terms include
+response to osmotic stress, androgen receptor signaling pathway,
+cholesterol biosynthetic process, and response to hormone. There were
+not any enriched KEGG pathways.
+
+### Question 13
+
+**Another way of getting the AR target genes is to consider the number
+of AR binding sites within 100KB of TSS, but weight each binding site by
+an exponential decay of its distance to the gene TSS (i.e. peaks closer
+to TSS have higher weights).**
+
+**For this, we have calculated a regulatory potential score for each
+RefSeq gene:**
+`/shared/courseSharedFolders/133853/HW3/data/AR_peaks_regulatory_potential.txt`
+
+**Run DAVID GO analysis (<https://david.ncifcrf.gov/>) on:** **1) the
+1500 genes with the highest regulatory potential scores** **2) genes
+from:**
+`/shared/courseSharedFolders/133853/HW3/data/up_regulated_genes_in_prostate_cancer.txt`
+**that also rank in the top 1500 in terms of regulatory potential
+score.**
+
+```{r}
+
+ar_peaks_file <- "AR_peaks_regulatory_potential.txt"
+ar_peaks <- read.table(ar_peaks_file, header = FALSE)
+colnames(ar_peaks) = c("chrom","txStart",	"txEnd","refseq","score",	"strand",	"symbol",	"rank") 
+top_1500 <- ar_peaks$symbol[1:1500]
+write.table(top_1500, file = "top_1500.txt", quote = FALSE, col.names = FALSE, row.names = FALSE)
+
+
+up_genes_file <- "up_regulated_genes_in_prostate_cancer.txt"
+up_genes <- read.table("up_regulated_genes_in_prostate_cancer.txt",header = TRUE)
+matches <- subset(up_genes, geneName %in% top_1500)
+matches <- matches$geneName
+write.table(matches, file = "top_1500_matches.txt", quote = FALSE, col.names = FALSE, row.names = FALSE)
+
+matches
+```
+
+1)  Statistically significant DAVID GO terms on the 1500 genes with the
+    highest regulatory potential scores:
+
+```{r, echo=FALSE}
+knitr::include_graphics("q13a.png")
+knitr::include_graphics("q13g.png")
+
+```
+
+2)  Statistically significant DAVID GO terms on the
+    `up_regulated_genes_in_prostate_cancer.txt` genes that also rank in
+    the top 1500 in terms of regulatory potential score:
+
+```{r, echo=FALSE}
+knitr::include_graphics("q13d.png")
+knitr::include_graphics("q13h.png")
+```
+
+### Question 14
+
+**For what you did in Q11-13, Cistrome-GO <http://go.cistrome.org/>
+already provides a very simple solution. It performs functional
+enrichment analysis using a ChIP-seq peak file and an optional
+differential expression analysis file.**
+
+**Now, submit your differential peaks (`.bed` from Q4) and upregulated
+genes (`up_regulated_genes_in_prostate_cancer.txt`) to Cistrome-GO to
+see the enriched biological functions or pathways. Insert screenshots of
+your results.**
+
+Hint: Please refer to
+<https://academic.oup.com/nar/article/47/W1/W206/5485528> The
+differential peaks are from Q4 output, and the upregulated genes are
+provided in Q13's up_regulated_genes_in_prostate_cancer.txt
+
+```{r, engine='bash', eval=FALSE}
+ar_peaks_file="/shared/home/cac8967/HW3/part1/tumor_vs_normal_peaks_summits.bed"
+output_file="/shared/home/cac8967/HW3/part5/q14.bed"
+
+# Sort the data based on the second column (V2)
+sorted_data=$(sort -k 2 "$ar_peaks_file")
+
+# Filter the data based on the length of the first column (V1)
+filtered_data=$(echo "$sorted_data" | awk 'length($1) == 1 || length($1) == 2')
+
+concatenated_data=$(echo "$filtered_data" | awk -F'\t' '{$1 = "chr" $1; OFS="\t"; print}')
+
+# Write the filtered data to a new BED file
+echo "$concatenated_data" > "$output_file"
+```
+
+Cistrome-GO genes:
+
+```{r, echo=FALSE}
+knitr::include_graphics("q14a.png")
+```
+
+Cistrome-GO enriched KEGG pathways:
+
+```{r, echo=FALSE}
+knitr::include_graphics("q14b.png")
+```
+
+Cistrome-GO enriched biological processes and molecular functions:
+
+```{r, echo=FALSE}
+knitr::include_graphics("q14f.png")
+knitr::include_graphics("q14d.png")
+```
+
+# Summary:
+
+With HW3, we hope you can see the value of TF ChIP-seq, motifs, and GO
+in understanding gene regulation. We also hope you can appreciate the
+value of using publicly available data and Cistrome resources to inform
+your research questions.
+
+## Part VII. Bonus Questions
+
+If you would like, you can propose new homework questions to be used
+next year. This is completely optional, and worth a maximum of 5 points.
+Since these are bonus questions, TFs won't be able to help much.
+
+### Bonus Q1:
+
+For batch effect removal, we used to have a perfect example from
+expression microarrays. With and without batch effect, the clustering,
+differential expression, and GO analysis give completely different
+results, also batch effect removal greatly improved the results.
+Unfortunately with microarray topic removed from the class, we haven't
+been able to find a good (and simple) RNA-seq example for Part I of HW2.
+After testing many public datasets without success, we finally decided
+to simulate the RNA-seq data used in HW2 Part 1 by artificially adding
+batch effect to half of the samples. You might have noticed that with or
+without batch effect removal, even though PCA and clustering look
+different, the GO analysis give quite similar results. Therefore, we are
+asking whether you could find a better dataset for HW2 Part I, to show
+case batch effect removal, differential expression, clustering
+(H-cluster, K-means, and PCA), GO, and GESA. We hope you could provide
+the data, code, as well as the answers to all the questions in HW2 Part
+I.
+
+### Bonus Q2:
+
+There are many publicly available machine learning package. You used the
+R package Caret in Part II of HW2. Sklearn is a python package for
+machine learning. For this bonus question, we ask you to rewrite the
+Part II of HW2, with an Sklearn solution. You might also need pandas and
+numpy python packages, and some R plotting functions.
+
+**\*Submitted as separate .html and .rmd files (BonusQ2.html and
+BonusQ2.rmd)**
